@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RentWise — Rental Management System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- AUTH VIEW -->
+  <div id="auth-view" class="auth-wrapper">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="brand-logo">RF</div>
+        <div>
+          <h1>RentWise</h1>
+          <p class="muted">Rental Management System</p>
+        </div>
+      </div>
+
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab active" data-auth-tab="login" role="tab">Sign In</button>
+        <button class="auth-tab" data-auth-tab="signup" role="tab">Create Account</button>
+      </div>
+
+      <!-- Login Panel -->
+      <div id="auth-login-panel" class="auth-panel">
+        <p class="auth-desc">Sign in with your authorized Google account (<code>@gmail.com</code>).</p>
+        <form id="login-form" class="stack-md">
+          <div class="form-group">
+            <label for="login-email">Google Email Address <span class="req">*</span></label>
+            <input type="email" id="login-email" placeholder="name@gmail.com" required />
+            <small class="helper">Demo accounts: <strong>manager@gmail.com</strong> (Admin/Manager) or <strong>juan.delacruz@gmail.com</strong> (Tenant)</small>
+          </div>
+          <div id="login-error" class="alert alert-error hidden"></div>
+          <button type="submit" class="btn btn-primary btn-full">
+            <span class="google-g">G</span> Continue with Google
+          </button>
+        </form>
+
+        <div class="demo-quick-login">
+          <span class="muted">Quick Demo Access:</span>
+          <div class="btn-row">
+            <button type="button" class="btn btn-outline btn-sm" id="demo-admin-btn">Admin / Manager</button>
+            <button type="button" class="btn btn-outline btn-sm" id="demo-tenant-btn">Tenant Portal</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Signup Panel -->
+      <div id="auth-signup-panel" class="auth-panel hidden">
+        <p class="auth-desc">Create a tenant account using Google. Staff/Admin roles are assigned only by administrators.</p>
+        <form id="signup-form" class="stack-md">
+          <div class="form-group">
+            <label for="signup-name">Full Name <span class="req">*</span></label>
+            <input type="text" id="signup-name" placeholder="e.g., Maria Santos" required />
+          </div>
+          <div class="form-group">
+            <label for="signup-email">Gmail Address <span class="req">*</span></label>
+            <input type="email" id="signup-email" placeholder="maria.santos@gmail.com" required />
+            <small class="helper">Must be a valid @gmail.com address.</small>
+          </div>
+          <div class="form-group">
+            <label for="signup-code">Tenant Invitation Code (Optional)</label>
+            <input type="text" id="signup-code" placeholder="e.g., INV-2026-01" />
+            <small class="helper">Without a linked record, your account will enter Access Pending review.</small>
+          </div>
+          <div id="signup-error" class="alert alert-error hidden"></div>
+          <button type="submit" class="btn btn-primary btn-full">
+            <span class="google-g">G</span> Sign Up with Google
+          </button>
+        </form>
+      </div>
+
+      <!-- Access Pending Panel -->
+      <div id="auth-pending-panel" class="auth-panel hidden">
+        <div class="pending-box">
+          <div class="pending-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          </div>
+          <h2>Access Pending</h2>
+          <p class="muted" id="pending-email-text">Your Google account is valid, but it has not been linked to an authorized tenant or staff record yet.</p>
+          <p class="muted">Please contact your property administrator to link your account.</p>
+          <button type="button" class="btn btn-outline btn-full" id="back-to-login-btn">Back to Sign In</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP SHELL -->
+  <div id="app-shell" class="app-shell hidden">
+    <div id="mobile-backdrop" class="mobile-backdrop hidden"></div>
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar" aria-label="Primary Navigation">
+      <div class="sidebar-header">
+        <div class="brand-logo sm">RF</div>
+        <div class="brand-text">
+          <strong>RentFlow</strong>
+          <span id="role-badge-text" class="role-pill">Admin / Manager</span>
+        </div>
+        <button id="close-sidebar-btn" class="icon-btn mobile-only" aria-label="Close navigation">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+
+      <nav id="sidebar-nav" class="sidebar-nav"></nav>
+
+      <div class="sidebar-footer">
+        <button id="logout-btn" class="btn btn-outline btn-full btn-sm">Sign Out</button>
+      </div>
+    </aside>
+
+    <!-- Main Area -->
+    <div class="main-wrapper">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="open-sidebar-btn" class="icon-btn mobile-only" aria-label="Open navigation">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          </button>
+          <div>
+            <h1 id="page-title" class="page-title">Dashboard</h1>
+            <p id="page-subtitle" class="page-subtitle muted"></p>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <div class="notif-wrapper">
+            <button id="notif-bell-btn" class="icon-btn" aria-label="Notifications">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+              <span id="notif-badge" class="notif-badge hidden">0</span>
+            </button>
+            <div id="notif-dropdown" class="notif-dropdown hidden">
+              <div class="notif-dropdown-header">
+                <strong>Notifications</strong>
+                <button id="mark-all-read-btn" class="link-btn">Mark all read</button>
+              </div>
+              <div id="notif-dropdown-list" class="notif-dropdown-list"></div>
+              <div class="notif-dropdown-footer">
+                <button id="view-all-notifs-btn" class="link-btn">View all notifications</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="user-chip">
+            <div id="user-avatar" class="avatar">AD</div>
+            <div class="user-meta">
+              <strong id="user-name">Admin User</strong>
+              <span id="user-email" class="muted">manager@gmail.com</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main id="content-area" class="content-area"></main>
+    </div>
+  </div>
+
+  <!-- MODAL -->
+  <div id="modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box" id="modal-box">
+      <div class="modal-header">
+        <h2 id="modal-title">Modal Title</h2>
+        <button id="modal-close-btn" class="icon-btn" aria-label="Close modal">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- TOAST CONTAINER -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
