@@ -1,1747 +1,2112 @@
-/* ==========================================================================
-   RentFlow — Rental Management System Frontend (Mock Service + Role-Based UI)
-   ========================================================================== */
+/* =========================================================
+   Rentwise · Rental Management System — frontend (vanilla JS)
+   ---------------------------------------------------------
+   Structure
+     1. Utilities & icons
+     2. Mock database (replace with your backend)
+     3. Domain rules (bill status, lease status) — derived, never hardcoded
+     4. Service layer (async; swap the bodies for fetch() calls)
+     5. UI components
+     6. Views (auth, admin/manager portal, tenant portal)
+     7. Actions & forms (event delegation)
+     8. Router & boot
+   Everything marked DEMO is mock behaviour: no real Google OAuth,
+   payments, file uploads, email or push notifications.
+   ========================================================= */
+'use strict';
 
-const STORAGE_KEY = 'rentflow_rms_state_v1';
+/* ---------------------------------------------------------
+   1. Utilities & icons
+   --------------------------------------------------------- */
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
-const INITIAL_DATA = {
+/* Demo "today". In production use new Date(). */
+const TODAY = new Date('2026-11-24T00:00:00');
+const CURRENT_PERIOD = '2026-11';
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const peso = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pesoShort = (n) => n >= 1000 ? '₱' + Math.round(n / 1000) + 'k' : '₱' + n;
+const toDate = (s) => new Date(String(s).slice(0, 10) + 'T00:00:00');
+const fmtDate = (s) => toDate(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+const fmtShort = (s) => toDate(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const fmtDT = (iso) => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const monthLabel = (p) => new Date(p + '-01T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+const monthShort = (p) => new Date(p + '-01T00:00:00').toLocaleDateString('en-US', { month: 'short' });
+const daysBetween = (a, b) => Math.round((b - a) / 86400000);
+const initials = (name) => name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+const uid = (prefix) => prefix + '-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+const isoDate = (dt) => dt.toISOString().slice(0, 10);
+/* A timestamp on the demo "today" with the real clock time */
+const nowISO = () => { const n = new Date(); const d = new Date(TODAY); d.setHours(n.getHours(), n.getMinutes(), n.getSeconds()); return d.toISOString(); };
+const wait = (ms = 160) => new Promise((r) => setTimeout(r, ms));
+const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* Brand: Rentwise. Logos are embedded below, so no extra files are needed.
+   The light version (white + aqua) is used on the Ocean-blue sidebar and sign-in panel. */
+/* Rentwise logo images, embedded so the logo shows even without the /assets folder. */
+const LOGO_DATA = {
+  logo: 'data:image/png;base64,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',
+  logoLight: 'data:image/png;base64,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',
+  mark: 'data:image/png;base64,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',
+  markLight: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAF0AAABgCAMAAABIS46CAAAAkFBMVEX+//82yaL8/f0AAAA1uZY2tZb+/wH+/v6v+vn+/v4w+e43za5j+fBt/W0D/wN8/RJd8618fHz9q6v9/XusrFv/fX2r866urq4d9q3x6az/rP//AP9htK1CzKz6unY2q48p9Xd/fwesWger8l5/PwBtthYAeHg0uypxuHEffwAfuWw3wKKqVVWq/wD/AAB/f/+ONWkqAAAAMHRSTlP8/AYA75wCsBBeE1cNAgECBgIDAgMCBAMFBAMBFFQEZAQCAwQEBAIDAwMEhAMDAQLOEOQnAAAExklEQVR42t2aDXPiIBCG00URKZDvxLS22nr26653///fHSSx1bAbk9bM3Nw704465slmWeAFDJgn0CbUtWCAGDOcM85NrQ4q8OFQmNCYoXRgOrTo3/bK2zxPDh+62+J0oQsYJQGgrOwrKer3on0sn84rAYvhWkL2AmIz72gjMDrnvGLLYLgWrLJPOp91NFdo7JBWDEbRCwViPrs60WwuQHDu02Fs7JECNb/y6AlH6TCSrqLJ6bOJ6IqgQ3gJOkA5Kb2YlA7T0hMxJV3A/0nvjqYCLkJPzIHeDsgH/kXoNw19708gI+gBSWeODltYdjUm9gg0Qbfju731AotnsFahgZF0BmygTMgZTWdE7AUUUbT+aG3VYzkkTecZGntlQB05gwoKWWa2+dpmbzoG1PMwD+maIegp+3MaopLWTWjwJ3lLL1F62EcH30WsvATx8J2kv9N0aww8FzFT8NbNura20OB03RP7g3fF1dyWn9+q1j3CaPqr9OgzUdPbsQ4+20BIhJ7vRtO3rc8dQP/dQ7//8e3Y9T9IP+ql7X0uTT+eypxtH0t/VBPSIQaMDpPSR8ce4/SSoqdOzQrPtCOzbVXfYd/WngAG062LWNf0+zTLHpzy3LjwI4LOxtBd3oUTiNP5YzWaniD067vrrjZre6uvxP6zS7+aIXKD4Xj6E0LHZE2XhrH04Iffmyj6nwiryD56gowEFP3Xv0Z/lEPzDiSdX4IeRuRIQNPn09Eh/i79dlJ6PWtT9FwNpxcYPQkvREf7KpgL0cWE9Nyg9JvLZCaR6Mx3I4Gki3xYzbgUAOZSVQIpTU/EZjZE83p6CvyPk5KO3V6x9mciRBGzM7dYdz9e11MiGbsoum4RFahg987RL/XQI7vgC/bPz2uInaAqY7fQiN394iPteboKU562b+2Gc8Nt/tF0/fC4f35t43h6WwVvL1HUrpuqdGeNx8kCioeNPjZK+uiF3ioJrOO5NJmpFI73yA/fIumRiK7vrJpGcq/ugibyJSIb6k4b/Wm7++mQgVeR87VdgRPbK1DojMNg+i/E6bWxE9vBe3ag87P0nKSzBYZfrooD3a2/z9ATil5tgdoFYhega7MktrCCA/1sZkg67AvAc/OZmbP0GKXLSGjbf/HcLNnQVr1/FD5dKmn7sFZA7MuB3SMbVJHYmm8upYxUfQzFiNQXw/oqmhkb+/aw3iBSX3TOyr5GJ1IPRgyiY6syKdVhl6CicgOp/jzuoytS9dKp1C9ZyofQJU4/ElX1+iP6kbE304fr6zdk6m1VhefoJR277S4ht2edr1RZwvmKlHTeGddpql8ytujtsn29iaCbw2lA5HZzqdHyXOxPeL03w2zbo3ZP9GD8FfqKHdGBk2V5jr6m6J9401OW1Rf6qloZOLEhCnpyA2NHglO6vbYkR4ReH5n74/vM9ibZsUvBrq8sv0uP7zM89fBQgTv3YENrZqbkyrN61GC8UNvM0jXu9J4FcoovJEYnUi/rzLwgtnC/1XKz6Th++5w+nbkjG8xaLt9AOzpyzKN1pE9PAOtCX0nMBBO+OAyjoEFUSdUa88r90MP9RsTkSVnGWVZm9q+MdRyXoCOMznnhTnUa2cuT+rci4uVZBR2LfhJTm9b+EPue5C9jPHjFpBGEugAAAABJRU5ErkJggg==',
+  favicon: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAkFBMVEUbTHoAAAA2yaIO+/g2vJkaTYE1up04cY41ups2xKdo+vwqU3X////9/QIurqxzDwhPn7cy1rX/AP8Ta2xxcnEaF3N4uyIuWnNlAmIEfwQD+wB2+AxKpcoAAP8cs2ig4xt1chY2wZ9s/3ExY4YA/39Xp1pV/6q5AACvrw//AAAAf/8pqutQXaexFWOq/////3Go0+taAAAAMHRSTlP3APwG7P1pI5hVBqgBARQCDyUBBwIDA18DAgECEwEDBAOUAlcCBAMDAwECCAYDAwIs5DcPAAADRklEQVR42rWY63aqMBCFMw2gcokgoFysUgRbe33/tzsTEElCwFrW2f7RAN+aJDObiQQEUbrNYEwVBcjzwTCRAPak6HtFFckAL4IdmZDzWQJb9rKAyYC8QIDZ3Guaw+dN4pdgGU+dDAtqTwLQ8AbQa1/B6qkHrGCrAOJ7AAorYybAmgEwyR4UwPFBgH8PEM6NgI0BroNjgDiOQy7G7AYwTIIxwJscAYoDzDERn2oBdbi4aTKVh9uYYio/w0JMd/tj72vEB/es3N4BmKbD51F4YyWdagCRCCCOG2GJ0n5jFq1PoJ69n5+jZg0UAKyBWZa1sloxCG+17+Wep0nlIWBpdDcZBgPWu0eVZ3cAuIguAoSKpQho56BdAx0AFMCheghA5kcwBHT2iZjDXwGd67M/TWEWIMASPVzFAkRZkqnmCKB3IpAUgAw4wj3AShSjyaMAnoyC6MCR7gMk/QrwOg4w/gNAswuv9OX3gK0WsJwHWD8CeNMB7LkRuDMBX/AymQdSJkYaQO9IbfaJKcmLyeiSk7c4JB8CEsrQkztX5gbdf8dGjfUX0LI3SiLhO9T1mfheUHrC/Gc4pgLqMyFpe61IL4cwImS9LooC4HLBsXVR13W6DdM0iqDpE1XA9iw2kh/JhhCx2XQxjKziTr3Z6CMAai2XXf0uGbyHcrPJ0m3WeNwoQLY08Hn32rcI+O5qQ/cI0QJABWDj5JAbAm85QdwAPE8fQaICaG7LbcYCPpsIRqawVgFBDSeZQOFjAkAUQHA+QzMJYSEhnFhEJQIaYBcH3zLhhAs5mkgaABIWcsvHsjAbBVAJYDMebCIvA7ZSBbkS5CZLA6AbrgSXwZQmUWdZDzCnAXjW+iJU3cuwGgHAYAq0LEufByrGsI8/9QAlE6nfNHkBhSalxb2MNQCTfKuJFG3auswT0O7lLwDX/UqACfuAj7Amhh7Q9vnuKADT7yQBHDt+7wHXYnMG1UhuACiu59K+LjGlCc8y4UigAFjb5nVyHen8sMuak2vo9Nq5BB3phX+4luzWYUGT0swRtfNSBNBQNNmyPF9duXnSpbZk0a5syXnZnpm426JwoUPIsksC6y/8hYPJRvk7oIjjJIYk4bsSYyefwT9lJ0oEmXdCVgAAAABJRU5ErkJggg=='
+};
+const BRAND = { name: 'Rentwise', logo: LOGO_DATA.logo, logoLight: LOGO_DATA.logoLight, mark: LOGO_DATA.mark, markLight: LOGO_DATA.markLight };
+/* Browser-tab icon also comes from the embedded image (works without /assets). */
+(function setFavicon() { let l = document.querySelector('link[rel="icon"]'); if (!l) { l = document.createElement('link'); l.rel = 'icon'; document.head.appendChild(l); } l.href = LOGO_DATA.favicon; })();
+const brandBlock = (sub, size = 'md') => `<div class="brand brand-${size}"><img class="brand-logo" src="${BRAND.logoLight}" alt="${esc(BRAND.name)}" width="448" height="96"><span class="brand-sub">${esc(sub)}</span></div>`;
+
+const ICONS = {
+  home: 'M3 10.5L12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
+  grid: 'M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z',
+  building: 'M3 21h18M5 21V7l7-4 7 4v14M9 9h1M14 9h1M9 13h1M14 13h1M10 21v-4h4v4',
+  units: 'M4 4h16v16H4zM4 12h16M12 4v16',
+  users: 'M16 20v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 20v-1a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8',
+  user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1',
+  file: 'M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8zM14 3v5h5M9 13h6M9 17h4',
+  receipt: 'M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h3',
+  card: 'M3 6h18v12H3zM3 10h18M7 15h3',
+  chat: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  megaphone: 'M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1M16 9a4 4 0 0 1 0 6',
+  bell: 'M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9M10 20a2 2 0 0 0 4 0',
+  chart: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+  gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1',
+  plus: 'M12 5v14M5 12h14',
+  menu: 'M4 6h16M4 12h16M4 18h16',
+  x: 'M6 6l12 12M18 6L6 18',
+  check: 'M5 12.5l4.5 4.5L19 7.5',
+  clock: 'M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  half: 'M12 3v18M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  circle: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  alert: 'M12 7.5v5M12 16v.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  arrow: 'M5 12h12M13 7l5 5-5 5',
+  back: 'M15 5l-7 7 7 7',
+  print: 'M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z',
+  download: 'M12 4v11M7 10l5 5 5-5M4 20h16',
+  search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14M21 21l-4.3-4.3',
+  logout: 'M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H3',
+  image: 'M4 5h16v14H4zM4 15l4-4 4 4 3-3 5 5M15.5 9.5h.01',
+  sort: 'M8 9l4-4 4 4M8 15l4 4 4-4',
+  trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
+  lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4',
+  refresh: 'M20 11a8 8 0 0 0-14.9-3M4 4v4h4M4 13a8 8 0 0 0 14.9 3M20 20v-4h-4',
+  chevron: 'M6 9l6 6 6-6',
+  chevronLeft: 'M15 18l-6-6 6-6',
+  chevronRight: 'M9 18l6-6-6-6',
+  swap: 'M7 16V4M3 8l4-4 4 4M17 8v12M21 16l-4 4-4-4',
+  key: 'M21 2l-2 2M11.4 11.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zM11.4 11.6L15.5 7.5M15.5 7.5l3 3L22 7l-3-3M15.5 7.5L19 4',
+  sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
+  moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'
+};
+const icon = (name, size = 18, sw = 1.8) =>
+  `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] || ICONS.circle}"></path></svg>`;
+const GOOGLE_G = `<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>`;
+
+/* ---------------------------------------------------------
+   2. Mock database
+   Shapes follow the handoff ERD (USERS, PROPERTIES, UNITS, TENANTS,
+   LEASES, BILLS, BILL_ITEMS, PAYMENTS, PAYMENT_ALLOCATIONS,
+   CONCERNS, CONCERN_MESSAGES, ANNOUNCEMENTS(+TARGETS), NOTIFICATIONS).
+   --------------------------------------------------------- */
+const db = {
   users: [
-    { id: 'u1', email: 'manager@gmail.com', name: 'Elena Reyes', role: 'admin', isActive: true },
-    { id: 'u2', email: 'juan.delacruz@gmail.com', name: 'Juan Dela Cruz', role: 'tenant', tenantId: 't1', isActive: true },
-    { id: 'u3', email: 'maria.clara@gmail.com', name: 'Maria Clara', role: 'tenant', tenantId: 't2', isActive: true }
+    { id: 'U-M1', name: 'Maria Santos', email: 'maria.santos@gmail.com', role: 'manager', title: 'Property Manager', propertyIds: ['P1', 'P2', 'P3'] },
+    { id: 'U-T1', name: 'Carlo Dizon', email: 'carlo.dizon@gmail.com', role: 'tenant', tenantId: 'T1' }
   ],
   properties: [
-    { id: 'p1', name: 'Cedar Heights Apartments', address: '124 Tibanga Rd, Iligan City', description: '3-storey residential apartment near university belt.' },
-    { id: 'p2', name: 'Palm Courtyard Suites', address: '88 Pala-o Ave, Iligan City', description: 'Modern studio and 1-bedroom units with parking.' }
+    { id: 'P1', name: 'Narra Court', address: '18 Narra St., Project 4, Quezon City', description: '3-storey walk-up with studios and 1-bedroom units.' },
+    { id: 'P2', name: 'Sampaguita Residences', address: '220 Kalayaan Ave., Makati City', description: 'Mid-rise residences near the business district.' },
+    { id: 'P3', name: 'Acacia Lofts', address: '7 Acacia Lane, Kapitolyo, Pasig City', description: 'Loft units with ground-floor parking.' }
   ],
   units: [
-    { id: 'un1', propertyId: 'p1', name: 'Unit 101', type: 'Studio', rent: 4000, status: 'Occupied', notes: 'Ground floor, near gate' },
-    { id: 'un2', propertyId: 'p1', name: 'Unit 102', type: '1-Bedroom', rent: 6500, status: 'Occupied', notes: 'With balcony' },
-    { id: 'un3', propertyId: 'p1', name: 'Unit 201', type: 'Studio', rent: 4200, status: 'Available', notes: 'Newly painted' },
-    { id: 'un4', propertyId: 'p2', name: 'Suite A1', type: '1-Bedroom', rent: 8000, status: 'Occupied', notes: 'Includes 1 parking slot' },
-    { id: 'un5', propertyId: 'p2', name: 'Suite A2', type: 'Studio', rent: 5500, status: 'Under Maintenance', notes: 'Plumbing upgrade' }
+    { id: 'UN1', propertyId: 'P1', name: '104', type: 'Studio', rent: 4000, status: 'Occupied' },
+    { id: 'UN2', propertyId: 'P1', name: '201', type: '1-Bedroom', rent: 5100, status: 'Occupied' },
+    { id: 'UN3', propertyId: 'P1', name: '302', type: 'Studio', rent: 4200, status: 'Available' },
+    { id: 'UN4', propertyId: 'P2', name: '2B', type: '1-Bedroom', rent: 5000, status: 'Occupied' },
+    { id: 'UN5', propertyId: 'P2', name: '3A', type: '2-Bedroom', rent: 6200, status: 'Occupied' },
+    { id: 'UN6', propertyId: 'P2', name: '1C', type: 'Studio', rent: 4800, status: 'Occupied' },
+    { id: 'UN7', propertyId: 'P3', name: 'Loft 5', type: 'Loft', rent: 4650, status: 'Occupied' },
+    { id: 'UN8', propertyId: 'P3', name: 'Loft 2', type: 'Loft', rent: 4500, status: 'Occupied' },
+    { id: 'UN9', propertyId: 'P3', name: 'Loft 7', type: 'Loft', rent: 4500, status: 'Under Maintenance' }
   ],
   tenants: [
-    { id: 't1', userId: 'u2', fullName: 'Juan Dela Cruz', contact: '0917-123-4567', email: 'juan.delacruz@gmail.com', address: 'Cagayan de Oro City', emergencyContact: 'Rosa Dela Cruz (0917-999-1111)' },
-    { id: 't2', userId: 'u3', fullName: 'Maria Clara', contact: '0918-234-5678', email: 'maria.clara@gmail.com', address: 'Iligan City', emergencyContact: 'Tiago Santos (0918-888-2222)' },
-    { id: 't3', userId: null, fullName: 'Carlo Mendoza', contact: '0920-345-6789', email: 'carlo.mendoza@gmail.com', address: 'Ozamiz City', emergencyContact: 'Ana Mendoza (0920-777-3333)' }
+    { id: 'T1', userId: 'U-T1', name: 'Carlo Dizon', phone: '0917 555 0104', email: 'carlo.dizon@gmail.com', address: 'Narra Court 104, Quezon City', emergency: 'Liza Dizon · 0918 222 0199' },
+    { id: 'T2', userId: null, name: 'Ana Villanueva', phone: '0920 555 0201', email: 'ana.villanueva@gmail.com', address: 'Narra Court 201, Quezon City', emergency: '' },
+    { id: 'T3', userId: null, name: 'Joanna Reyes', phone: '0915 555 0022', email: 'joanna.reyes@gmail.com', address: 'Sampaguita 2B, Makati', emergency: '' },
+    { id: 'T4', userId: null, name: 'Liza Manalo', phone: '0917 555 0303', email: 'liza.manalo@gmail.com', address: 'Sampaguita 3A, Makati', emergency: '' },
+    { id: 'T5', userId: null, name: 'Mika Tan', phone: '0999 555 0011', email: 'mika.tan@gmail.com', address: 'Sampaguita 1C, Makati', emergency: '' },
+    { id: 'T6', userId: null, name: 'Ramon Cruz', phone: '0918 555 0505', email: 'ramon.cruz@gmail.com', address: 'Acacia Lofts 5, Pasig', emergency: '' },
+    { id: 'T7', userId: null, name: 'Paolo Garcia', phone: '0927 555 0202', email: 'paolo.garcia@gmail.com', address: 'Acacia Lofts 2, Pasig', emergency: '' }
   ],
   leases: [
-    { id: 'l1', tenantId: 't1', unitId: 'un1', startDate: '2026-01-01', endDate: '2026-12-31', durationMonths: 12, agreedRent: 4000, deposit: 8000, status: 'Expiring Soon', notes: 'Standard 1-year residential lease.' },
-    { id: 'l2', tenantId: 't2', unitId: 'un2', startDate: '2026-03-01', endDate: '2027-02-28', durationMonths: 12, agreedRent: 6500, deposit: 13000, status: 'Active', notes: 'Includes water sub-meter.' },
-    { id: 'l3', tenantId: 't3', unitId: 'un4', startDate: '2026-06-01', endDate: '2026-11-30', durationMonths: 6, agreedRent: 8000, deposit: 16000, status: 'Expiring Soon', notes: '6-month lease with parking.' }
+    { id: 'LS-031', tenantId: 'T1', unitId: 'UN1', start: '2026-04-01', end: '2027-03-31', months: 12, rent: 4000, deposit: 8000, status: 'Active', notes: '' },
+    { id: 'LS-024', tenantId: 'T2', unitId: 'UN2', start: '2026-01-15', end: '2027-01-14', months: 12, rent: 5100, deposit: 10200, status: 'Active', notes: '' },
+    { id: 'LS-036', tenantId: 'T3', unitId: 'UN4', start: '2026-06-01', end: '2027-05-31', months: 12, rent: 5000, deposit: 10000, status: 'Active', notes: '' },
+    { id: 'LS-019', tenantId: 'T4', unitId: 'UN5', start: '2026-01-01', end: '2026-12-31', months: 12, rent: 6200, deposit: 12400, status: 'Active', notes: '' },
+    { id: 'LS-041', tenantId: 'T5', unitId: 'UN6', start: '2026-09-01', end: '2027-02-28', months: 6, rent: 4800, deposit: 9600, status: 'Active', notes: '' },
+    { id: 'LS-012', tenantId: 'T6', unitId: 'UN7', start: '2025-12-16', end: '2026-12-15', months: 12, rent: 4650, deposit: 9300, status: 'Active', notes: 'Tenant asked about renewal.' },
+    { id: 'LS-028', tenantId: 'T7', unitId: 'UN8', start: '2026-03-01', end: '2027-02-28', months: 12, rent: 4500, deposit: 9000, status: 'Active', notes: '' }
   ],
   bills: [
-    {
-      id: 'b1', leaseId: 'l1', billingPeriod: '2026-10', issueDate: '2026-10-01', dueDate: '2026-10-10',
-      items: [
-        { description: 'Monthly Rent', category: 'Rent', amount: 4000 },
-        { description: 'Electricity (45 kWh)', category: 'Electricity', amount: 500 },
-        { description: 'Water', category: 'Water', amount: 200 },
-        { description: 'Fiber Internet Share', category: 'Internet', amount: 300 }
-      ]
-    },
-    {
-      id: 'b2', leaseId: 'l1', billingPeriod: '2026-11', issueDate: '2026-11-01', dueDate: '2026-11-15',
-      items: [
-        { description: 'Monthly Rent', category: 'Rent', amount: 4000 },
-        { description: 'Electricity', category: 'Electricity', amount: 500 },
-        { description: 'Water', category: 'Water', amount: 200 },
-        { description: 'Internet', category: 'Internet', amount: 300 },
-        { description: 'Parking Slot', category: 'Parking', amount: 500 },
-        { description: 'Maintenance Fee', category: 'Maintenance', amount: 150 },
-        { description: 'Garbage Collection', category: 'Other Charges', amount: 100 }
-      ]
-    },
-    {
-      id: 'b3', leaseId: 'l2', billingPeriod: '2026-11', issueDate: '2026-11-01', dueDate: '2026-11-28',
-      items: [
-        { description: 'Monthly Rent', category: 'Rent', amount: 6500 },
-        { description: 'Electricity', category: 'Electricity', amount: 950 },
-        { description: 'Water', category: 'Water', amount: 250 }
-      ]
-    },
-    {
-      id: 'b4', leaseId: 'l3', billingPeriod: '2026-11', issueDate: '2026-11-01', dueDate: '2026-11-10',
-      items: [
-        { description: 'Monthly Rent', category: 'Rent', amount: 8000 },
-        { description: 'Electricity', category: 'Electricity', amount: 1200 },
-        { description: 'Association Dues', category: 'Association Dues', amount: 400 }
-      ]
-    }
+    { id: 'BL-2026-11-0042', leaseId: 'LS-031', period: '2026-11', issue: '2026-11-01', due: '2026-11-28', items: [
+      { id: 'I1', type: 'Rent', desc: 'Monthly rent', amount: 4000, note: 'Nov 2026 · per lease LS-031' },
+      { id: 'I2', type: 'Electricity', desc: 'Electricity', amount: 500, note: 'Meter 18,442 → 18,489 kWh' },
+      { id: 'I3', type: 'Water', desc: 'Water', amount: 200, note: 'Meter 1,204 → 1,215 m³' },
+      { id: 'I4', type: 'Internet', desc: 'Internet', amount: 300, note: 'Building fiber · Nov' },
+      { id: 'I5', type: 'Parking', desc: 'Parking', amount: 500, note: 'Slot P-12' },
+      { id: 'I6', type: 'Maintenance', desc: 'Maintenance', amount: 150, note: 'Common-area upkeep' }
+    ], log: [
+      { at: '2026-11-01T07:58:00', text: 'Bill generated from lease LS-031', by: 'Maria Santos', tone: '' },
+      { at: '2026-11-01T08:00:00', text: 'Bill published, tenant notified', by: 'Maria Santos', tone: '' },
+      { at: '2026-11-15T16:02:00', text: 'Payment of ₱3,000.00 verified and allocated', by: 'Maria Santos', tone: 'green' },
+      { at: '2026-11-23T21:14:00', text: 'Payment of ₱2,650.00 submitted by tenant', by: 'Carlo Dizon', tone: 'amber' }
+    ] },
+    { id: 'BL-2026-11-0043', leaseId: 'LS-024', period: '2026-11', issue: '2026-11-01', due: '2026-11-10', items: [
+      { id: 'I1', type: 'Rent', desc: 'Monthly rent', amount: 5100, note: 'Nov 2026' }
+    ], log: [] },
+    { id: 'BL-2026-11-0044', leaseId: 'LS-036', period: '2026-11', issue: '2026-11-01', due: '2026-11-25', items: [
+      { id: 'I1', type: 'Rent', desc: 'Monthly rent', amount: 5000, note: 'Nov 2026' },
+      { id: 'I2', type: 'Electricity', desc: 'Electricity', amount: 450, note: '' },
+      { id: 'I3', type: 'Water', desc: 'Water', amount: 300, note: '' }
+    ], log: [] },
+    { id: 'BL-2026-11-0045', leaseId: 'LS-019', period: '2026-11', issue: '2026-11-01', due: '2026-11-20', items: [
+      { id: 'I1', type: 'Rent', desc: 'Monthly rent', amount: 6200, note: 'Nov 2026' }
+    ], log: [] },
+    { id: 'BL-2026-11-0046', leaseId: 'LS-041', period: '2026-11', issue: '2026-11-01', due: '2026-11-30', items: [
+      { id: 'I1', type: 'Rent', desc: 'Monthly rent', amount: 4800, note: 'Nov 2026' },
+      { id: 'I2', type: 'Electricity', desc: 'Electricity', amount: 800, note: '' },
+      { id: 'I3', type: 'Water', desc: 'Water', amount: 150, note: '' }
+    ], log: [] },
+    { id: 'BL-2026-11-0047', leaseId: 'LS-012', period: '2026-11', issue: '2026-11-01', due: '2026-11-15', items: [
+      { id: 'I1', type: 'Rent', desc: 'Monthly rent', amount: 4650, note: 'Nov 2026' }
+    ], log: [] },
+    { id: 'BL-2026-11-0048', leaseId: 'LS-028', period: '2026-11', issue: '2026-11-01', due: '2026-11-15', items: [
+      { id: 'I1', type: 'Rent', desc: 'Monthly rent', amount: 4500, note: 'Nov 2026' },
+      { id: 'I2', type: 'Parking', desc: 'Parking', amount: 500, note: 'Slot A-2' }
+    ], log: [] }
   ],
   payments: [
-    { id: 'pay1', tenantId: 't1', billId: 'b1', amount: 5000, date: '2026-10-08', method: 'GCash', reference: 'GC-8841201', status: 'Verified', notes: 'Paid in full' },
-    { id: 'pay2', tenantId: 't1', billId: 'b2', amount: 3000, date: '2026-11-12', method: 'Bank Transfer', reference: 'BPI-559012', status: 'Verified', notes: 'Partial payment for Nov bill' },
-    { id: 'pay3', tenantId: 't2', billId: 'b3', amount: 7700, date: '2026-11-20', method: 'GCash', reference: 'GC-9920311', status: 'Pending Verification', notes: 'Uploaded receipt screenshot' }
+    { id: 'PY-1174', tenantId: 'T1', amount: 3000, date: '2026-11-15', method: 'Cash', ref: 'OR-1174', status: 'Verified', note: '', proof: '', reviewedBy: 'Maria Santos' },
+    { id: 'PY-1190', tenantId: 'T1', amount: 2650, date: '2026-11-23', method: 'Bank transfer', ref: 'BDO-88213', status: 'Pending Verification', note: 'Balance for November', proof: 'bdo-transfer-receipt.jpg' },
+    { id: 'PY-1191', tenantId: 'T3', amount: 5750, date: '2026-11-24', method: 'GCash', ref: '7712 4409', status: 'Pending Verification', note: '', proof: 'gcash-screenshot.png' },
+    { id: 'PY-1182', tenantId: 'T4', amount: 6200, date: '2026-11-19', method: 'Cash', ref: 'OR-1182', status: 'Verified', note: '', proof: '', reviewedBy: 'Maria Santos' },
+    { id: 'PY-1171', tenantId: 'T6', amount: 4650, date: '2026-11-14', method: 'GCash', ref: '7709 1123', status: 'Verified', note: '', proof: 'gcash.png', reviewedBy: 'Maria Santos' },
+    { id: 'PY-1169', tenantId: 'T7', amount: 2250, date: '2026-11-12', method: 'GCash', ref: '7701 8830', status: 'Verified', note: 'Half now, half next week', proof: 'gcash.png', reviewedBy: 'Maria Santos' },
+    { id: 'PY-1185', tenantId: 'T2', amount: 5100, date: '2026-11-20', method: 'Bank transfer', ref: 'BPI-55190', status: 'Rejected', note: '', proof: 'bpi.jpg', reviewedBy: 'Maria Santos', reason: 'Reference number not found in bank statement.' }
+  ],
+  allocations: [
+    { paymentId: 'PY-1174', billId: 'BL-2026-11-0042', amount: 3000 },
+    { paymentId: 'PY-1190', billId: 'BL-2026-11-0042', amount: 2650 },
+    { paymentId: 'PY-1191', billId: 'BL-2026-11-0044', amount: 5750 },
+    { paymentId: 'PY-1182', billId: 'BL-2026-11-0045', amount: 6200 },
+    { paymentId: 'PY-1171', billId: 'BL-2026-11-0047', amount: 4650 },
+    { paymentId: 'PY-1169', billId: 'BL-2026-11-0048', amount: 2250 },
+    { paymentId: 'PY-1185', billId: 'BL-2026-11-0043', amount: 5100 }
   ],
   concerns: [
-    {
-      id: 'c1', tenantId: 't1', propertyId: 'p1', unitId: 'un1', category: 'Plumbing',
-      title: 'Leaking kitchen sink faucet',
-      description: 'The faucet under the sink drips continuously even when turned off tightly.',
-      attachment: 'sink_leak.jpg', status: 'In Progress', assignedTo: 'Elena Reyes', createdAt: '2026-11-18',
-      messages: [
-        { senderRole: 'tenant', senderName: 'Juan Dela Cruz', text: 'Hi, the kitchen faucet has been leaking since last night.', sentAt: '2026-11-18 09:15' },
-        { senderRole: 'manager', senderName: 'Elena Reyes', text: 'Thanks for reporting, Juan. Our plumber is scheduled to visit tomorrow at 2 PM.', sentAt: '2026-11-18 11:30' }
-      ]
-    },
-    {
-      id: 'c2', tenantId: 't2', propertyId: 'p1', unitId: 'un2', category: 'Internet',
-      title: 'Slow Wi-Fi on 2nd floor',
-      description: 'Connection drops intermittently during evening hours.',
-      attachment: '', status: 'Pending', assignedTo: 'Unassigned', createdAt: '2026-11-22',
-      messages: [
-        { senderRole: 'tenant', senderName: 'Maria Clara', text: 'Wi-Fi has been disconnecting every 20 minutes.', sentAt: '2026-11-22 19:40' }
-      ]
-    }
+    { id: 'CN-0188', tenantId: 'T1', unitId: 'UN1', title: 'Wi-Fi drops every evening', category: 'Internet', status: 'In Progress', assignedTo: 'U-M1', created: '2026-11-22T20:41:00', attachment: 'router-lights.jpg' },
+    { id: 'CN-0190', tenantId: 'T3', unitId: 'UN4', title: 'Low water pressure in bathroom', category: 'Water', status: 'Pending', assignedTo: null, created: '2026-11-24T10:05:00', attachment: '' },
+    { id: 'CN-0186', tenantId: 'T6', unitId: 'UN7', title: 'Leaking sink pipe', category: 'Plumbing', status: 'In Progress', assignedTo: 'U-M1', created: '2026-11-21T08:30:00', attachment: 'sink.jpg' },
+    { id: 'CN-0184', tenantId: 'T7', unitId: 'UN8', title: 'Hallway light not working', category: 'Facility', status: 'Acknowledged', assignedTo: 'U-M1', created: '2026-11-20T19:12:00', attachment: '' },
+    { id: 'CN-0179', tenantId: 'T1', unitId: 'UN1', title: 'Bathroom door lock is loose', category: 'Room/Unit Maintenance', status: 'Resolved', assignedTo: 'U-M1', created: '2026-10-30T09:00:00', attachment: '' }
+  ],
+  messages: [
+    { id: 'M1', concernId: 'CN-0188', senderId: 'U-T1', text: 'The Wi-Fi disconnects almost every night between 7 and 11 PM. The router light turns orange. I work from home, so this is urgent.', at: '2026-11-22T20:41:00', attachment: 'router-lights.jpg' },
+    { id: 'M2', concernId: 'CN-0188', senderId: 'system', text: 'Status changed to Acknowledged', at: '2026-11-23T09:00:00' },
+    { id: 'M3', concernId: 'CN-0188', senderId: 'U-M1', text: 'Thanks, Carlo. Can you tell us if other devices drop too, or only your laptop?', at: '2026-11-23T09:05:00' },
+    { id: 'M4', concernId: 'CN-0188', senderId: 'U-T1', text: 'All devices: my phone and TV too.', at: '2026-11-23T10:12:00' },
+    { id: 'M5', concernId: 'CN-0188', senderId: 'system', text: 'Status changed to In Progress', at: '2026-11-24T08:30:00' },
+    { id: 'M6', concernId: 'CN-0188', senderId: 'U-M1', text: 'Our ISP technician will check the building line on Nov 25, 2–4 PM. Please be home so they can test the router in your unit.', at: '2026-11-24T08:32:00' },
+    { id: 'M7', concernId: 'CN-0190', senderId: 'T3', text: 'Water pressure in the bathroom has been very weak since yesterday morning.', at: '2026-11-24T10:05:00' },
+    { id: 'M8', concernId: 'CN-0186', senderId: 'T6', text: 'The pipe under the kitchen sink is dripping. I put a basin under it for now.', at: '2026-11-21T08:30:00' },
+    { id: 'M9', concernId: 'CN-0186', senderId: 'U-M1', text: 'Plumber is scheduled for Nov 26 morning.', at: '2026-11-22T11:00:00' },
+    { id: 'M10', concernId: 'CN-0184', senderId: 'T7', text: 'The 2nd floor hallway light near Loft 2 is out.', at: '2026-11-20T19:12:00' },
+    { id: 'M11', concernId: 'CN-0179', senderId: 'U-T1', text: 'The bathroom door lock is loose and sometimes does not latch.', at: '2026-10-30T09:00:00' },
+    { id: 'M12', concernId: 'CN-0179', senderId: 'U-M1', text: 'Fixed by our handyman today. Let us know if it happens again.', at: '2026-11-02T15:20:00' },
+    { id: 'M13', concernId: 'CN-0179', senderId: 'system', text: 'Status changed to Resolved', at: '2026-11-02T15:21:00' }
   ],
   announcements: [
-    {
-      id: 'a1', title: 'Scheduled Water Tank Cleaning',
-      description: 'Water supply at Cedar Heights Apartments will be interrupted on Nov 29 from 9:00 AM to 1:00 PM for routine tank sanitation.',
-      category: 'Maintenance', priority: 'High', publishDate: '2026-11-20', expiryDate: '2026-11-30',
-      audienceType: 'property', targetPropertyId: 'p1', targetTenantId: null
-    },
-    {
-      id: 'a2', title: 'November Billing Reminder',
-      description: 'Please settle your November statements on or before the due date to avoid late fees. Upload your payment reference in the portal.',
-      category: 'Payment Reminder', priority: 'Normal', publishDate: '2026-11-10', expiryDate: '2026-11-30',
-      audienceType: 'all', targetPropertyId: null, targetTenantId: null
-    }
+    { id: 'AN-14', createdBy: 'U-M1', title: 'Scheduled water interruption, Nov 26', body: 'Water will be off from 9:00 AM to 3:00 PM for tank cleaning at Narra Court. Please store water the night before.', category: 'Maintenance', priority: 'High', publish: '2026-11-24', expiry: '2026-11-27', targets: { type: 'property', ids: ['P1'] } },
+    { id: 'AN-13', createdBy: 'U-M1', title: 'November bills are out', body: 'November statements are now available in the tenant portal. Please settle on or before your due date and upload your proof of payment.', category: 'Payment Reminder', priority: 'Normal', publish: '2026-11-01', expiry: '', targets: { type: 'all', ids: [] } },
+    { id: 'AN-12', createdBy: 'U-M1', title: 'Fire drill at Sampaguita Residences', body: 'A fire drill will be held on Nov 29 at 10:00 AM. Please follow the marshals to the assembly area.', category: 'General Update', priority: 'Normal', publish: '2026-11-22', expiry: '2026-11-29', targets: { type: 'property', ids: ['P2'] } }
   ],
   notifications: [
-    { id: 'n1', userId: 'u2', title: 'Concern Updated', message: 'Your concern "Leaking kitchen sink faucet" is now In Progress.', type: 'concern', targetRoute: 'my-concerns', isRead: false, createdAt: '2026-11-18' },
-    { id: 'n2', userId: 'u2', title: 'New Announcement', message: 'Scheduled Water Tank Cleaning at Cedar Heights Apartments.', type: 'announcement', targetRoute: 'announcements', isRead: false, createdAt: '2026-11-20' },
-    { id: 'n3', userId: 'u1', title: 'Payment Pending Verification', message: 'Maria Clara submitted a ₱7,700.00 payment for verification.', type: 'payment', targetRoute: 'payments', isRead: false, createdAt: '2026-11-20' },
-    { id: 'n4', userId: 'u1', title: 'New Tenant Concern', message: 'Maria Clara reported "Slow Wi-Fi on 2nd floor".', type: 'concern', targetRoute: 'concerns', isRead: false, createdAt: '2026-11-22' }
+    { id: 'N1', userId: 'U-T1', title: 'New reply on your concern', message: 'Maria Santos replied to “Wi-Fi drops every evening”.', type: 'concern_reply', link: '/tenant/concerns/CN-0188', read: false, at: '2026-11-24T08:32:00' },
+    { id: 'N2', userId: 'U-T1', title: 'New announcement', message: 'Scheduled water interruption, Nov 26', type: 'announcement', link: '/tenant/announcements', read: false, at: '2026-11-24T07:00:00' },
+    { id: 'N3', userId: 'U-T1', title: 'Payment verified', message: 'Your ₱3,000.00 cash payment was verified.', type: 'payment_verified', link: '/tenant/bills/BL-2026-11-0042', read: true, at: '2026-11-15T16:02:00' },
+    { id: 'N4', userId: 'U-M1', title: 'Payment awaiting verification', message: 'Joanna Reyes submitted ₱5,750.00 via GCash.', type: 'payment_submitted', link: '/admin/payments', read: false, at: '2026-11-24T11:20:00' },
+    { id: 'N5', userId: 'U-M1', title: 'New concern', message: 'Low water pressure in bathroom · Sampaguita 2B', type: 'concern_new', link: '/admin/concerns/CN-0190', read: false, at: '2026-11-24T10:05:00' },
+    { id: 'N6', userId: 'U-M1', title: 'Payment awaiting verification', message: 'Carlo Dizon submitted ₱2,650.00 via bank transfer.', type: 'payment_submitted', link: '/admin/billing/BL-2026-11-0042', read: false, at: '2026-11-23T21:14:00' },
+    { id: 'N7', userId: 'U-M1', title: 'Contract expiring soon', message: 'Ramon Cruz · Acacia Lofts, Loft 5 ends Dec 15.', type: 'contract_expiring', link: '/admin/contracts', read: true, at: '2026-11-15T08:00:00' }
   ]
 };
 
-/* ---------- State & Persistence ---------- */
-let state = loadState();
-let currentUser = null;
-let currentRoute = 'dashboard';
+/* Seed earlier months (Jun–Oct) as fully paid rent-only bills so the
+   collections chart and payment history are derived from real records. */
+(function seedHistory() {
+  const months = ['2026-06', '2026-07', '2026-08', '2026-09', '2026-10'];
+  const methods = ['GCash', 'Bank transfer', 'Cash'];
+  db.leases.forEach((l, li) => months.forEach((m, mi) => {
+    if (l.start > m + '-28') return;
+    const billId = `BL-${m}-${l.id.slice(3)}`;
+    const payId = `PY-${m.replace('-', '')}${l.id.slice(3)}`;
+    const day = String(5 + ((mi + li) % 5)).padStart(2, '0');
+    db.bills.push({ id: billId, leaseId: l.id, period: m, issue: m + '-01', due: m + '-10',
+      items: [{ id: 'I1', type: 'Rent', desc: 'Monthly rent', amount: l.rent, note: monthLabel(m) }], log: [] });
+    db.payments.push({ id: payId, tenantId: l.tenantId, amount: l.rent, date: `${m}-${day}`, method: methods[(mi + li) % 3],
+      ref: 'REF-' + payId.slice(3), status: 'Verified', note: '', proof: '', reviewedBy: 'Maria Santos' });
+    db.allocations.push({ paymentId: payId, billId, amount: l.rent });
+  }));
+})();
 
-function loadState() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) return JSON.parse(saved);
-  } catch (e) { /* ignore */ }
-  return structuredClone(INITIAL_DATA);
+/* ---------------------------------------------------------
+   3. Domain rules (from the handoff "Important Business Rules")
+   --------------------------------------------------------- */
+const byId = (list, id) => db[list].find((x) => x.id === id);
+const userById = (id) => db.users.find((u) => u.id === id);
+const unitLabel = (unitId) => { const u = byId('units', unitId); const p = u && byId('properties', u.propertyId); return u ? `${p.name} · ${u.name}` : '—'; };
+const leaseOfBill = (b) => byId('leases', b.leaseId);
+const tenantOfBill = (b) => byId('tenants', leaseOfBill(b).tenantId);
+
+/** Bill money + status. Status is ALWAYS derived, never stored. */
+function billCalc(b) {
+  const total = b.items.reduce((s, i) => s + Number(i.amount), 0);
+  const allocs = db.allocations.filter((a) => a.billId === b.id).map((a) => ({ ...a, payment: byId('payments', a.paymentId) }));
+  const paid = allocs.filter((a) => a.payment.status === 'Verified').reduce((s, a) => s + a.amount, 0);
+  const pending = allocs.filter((a) => a.payment.status === 'Pending Verification').reduce((s, a) => s + a.amount, 0);
+  const balance = Math.max(0, +(total - paid).toFixed(2));
+  let status;
+  if (balance <= 0) status = 'Paid';
+  else if (toDate(b.due) < TODAY) status = 'Overdue';          // due date passed AND balance remains
+  else if (paid > 0) status = 'Partially Paid';
+  else status = 'Unpaid';
+  return { total, paid, pending, balance, status, allocs };
 }
 
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+function leaseStatus(l) {
+  if (l.status === 'Terminated') return 'Terminated';
+  if (toDate(l.start) > TODAY) return 'Pending';
+  const end = toDate(l.end);
+  if (end < TODAY) return 'Expired';
+  if (daysBetween(TODAY, end) <= 45) return 'Expiring Soon';
+  return 'Active';
 }
 
-/* ---------- Helpers & Domain Calculations ---------- */
-const peso = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const uid = (prefix) => prefix + Math.random().toString(36).slice(2, 8);
-const todayISO = () => new Date().toISOString().slice(0, 10);
-
-function getProperty(id) { return state.properties.find(p => p.id === id); }
-function getUnit(id) { return state.units.find(u => u.id === id); }
-function getTenant(id) { return state.tenants.find(t => t.id === id); }
-function getLease(id) { return state.leases.find(l => l.id === id); }
-
-function getBillMetrics(bill) {
-  const total = bill.items.reduce((sum, i) => sum + Number(i.amount || 0), 0);
-  const paid = state.payments
-    .filter(p => p.billId === bill.id && p.status === 'Verified')
-    .reduce((sum, p) => sum + Number(p.amount || 0), 0);
-  const balance = Math.max(0, total - paid);
-  let status = 'Unpaid';
-  if (balance === 0 && total > 0) {
-    status = 'Paid';
-  } else if (new Date(bill.dueDate) < new Date(todayISO()) && balance > 0) {
-    status = 'Overdue';
-  } else if (paid > 0 && balance > 0) {
-    status = 'Partially Paid';
-  }
-  return { total, paid, balance, status };
+function remaining(l) {
+  const days = daysBetween(TODAY, toDate(l.end));
+  if (days < 0) return 'Ended';
+  const months = Math.floor(days / 30.44);
+  const rest = Math.round(days - months * 30.44);
+  return months > 0 ? `${months} mo, ${rest} d left` : `${days} days left`;
 }
 
-function statusBadge(status) {
-  const map = {
-    'Paid': 'badge-green',
-    'Active': 'badge-green',
-    'Available': 'badge-green',
-    'Verified': 'badge-green',
-    'Resolved': 'badge-green',
-    'Partially Paid': 'badge-amber',
-    'Pending': 'badge-amber',
-    'Pending Verification': 'badge-amber',
-    'Expiring Soon': 'badge-amber',
-    'Under Maintenance': 'badge-amber',
-    'In Progress': 'badge-blue',
-    'Acknowledged': 'badge-blue',
-    'Occupied': 'badge-blue',
-    'Unpaid': 'badge-gray',
-    'Closed': 'badge-gray',
-    'Expired': 'badge-gray',
-    'Overdue': 'badge-red',
-    'Rejected': 'badge-red',
-    'Terminated': 'badge-red',
-    'High': 'badge-red',
-    'Normal': 'badge-blue'
-  };
-  return `<span class="badge ${map[status] || 'badge-gray'}">${status}</span>`;
+function activeLeaseOfTenant(tenantId) {
+  return db.leases.filter((l) => l.tenantId === tenantId && ['Active', 'Expiring Soon', 'Pending'].includes(leaseStatus(l)))
+    .sort((a, b) => b.start.localeCompare(a.start))[0];
 }
 
-function showToast(msg) {
-  const container = document.getElementById('toast-container');
-  const el = document.createElement('div');
-  el.className = 'toast';
-  el.textContent = msg;
-  container.appendChild(el);
-  setTimeout(() => el.remove(), 3200);
+function senderOf(m) {
+  if (m.senderId === 'system') return { name: 'System', role: 'system' };
+  const u = userById(m.senderId);
+  if (u) return { name: u.name, role: u.role, userId: u.id };
+  const t = byId('tenants', m.senderId);
+  return { name: t ? t.name : 'Tenant', role: 'tenant' };
 }
 
-let modalOpener = null;
-
-function openModal(title, html) {
-  modalOpener = document.activeElement;
-  document.getElementById('modal-title').textContent = title;
-  document.getElementById('modal-body').innerHTML = html;
-  document.getElementById('modal-overlay').classList.remove('hidden');
-  document.getElementById('modal-box').setAttribute('aria-labelledby', 'modal-title');
-  document.getElementById('modal-close-btn').focus();
+function announcementTargetsTenant(a, tenantId) {
+  if (a.targets.type === 'all') return true;
+  if (a.targets.type === 'tenant') return a.targets.ids.includes(tenantId);
+  const lease = activeLeaseOfTenant(tenantId);
+  const unit = lease && byId('units', lease.unitId);
+  return !!unit && a.targets.ids.includes(unit.propertyId);
 }
 
-function closeModal() {
-  document.getElementById('modal-overlay').classList.add('hidden');
-  if (modalOpener && typeof modalOpener.focus === 'function') modalOpener.focus();
-  modalOpener = null;
+function audienceLabel(a) {
+  if (a.targets.type === 'all') return 'All tenants';
+  if (a.targets.type === 'property') return a.targets.ids.map((id) => byId('properties', id).name).join(', ');
+  return a.targets.ids.map((id) => byId('tenants', id).name).join(', ');
 }
 
-function notifyUser(userId, title, message, type, targetRoute) {
-  if (!userId) return;
-  state.notifications.unshift({
-    id: uid('n'),
-    userId,
-    title,
-    message,
-    type,
-    targetRoute,
-    isRead: false,
-    createdAt: todayISO()
-  });
-}
-
-/* ---------- Navigation Config ---------- */
-const ADMIN_NAV = [
-  { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
-  { id: 'properties', label: 'Properties', icon: 'building' },
-  { id: 'units', label: 'Units / Spaces', icon: 'door' },
-  { id: 'tenants', label: 'Tenants', icon: 'users' },
-  { id: 'contracts', label: 'Contracts', icon: 'document' },
-  { id: 'billing', label: 'Billing', icon: 'receipt' },
-  { id: 'payments', label: 'Payments', icon: 'card' },
-  { id: 'concerns', label: 'Concerns', icon: 'tool' },
-  { id: 'announcements', label: 'Announcements', icon: 'megaphone' },
-  { id: 'notifications', label: 'Notifications', icon: 'bell' },
-  { id: 'reports', label: 'Reports', icon: 'chart' },
-  { id: 'settings', label: 'Settings', icon: 'settings' }
-];
-
-const TENANT_NAV = [
-  { id: 'dashboard', label: 'My Dashboard', icon: 'home' },
-  { id: 'my-contract', label: 'My Contract', icon: 'document' },
-  { id: 'my-bills', label: 'My Bills', icon: 'receipt' },
-  { id: 'my-payments', label: 'My Payments', icon: 'card' },
-  { id: 'raise-concern', label: 'Raise a Concern', icon: 'plus' },
-  { id: 'my-concerns', label: 'My Concerns', icon: 'tool' },
-  { id: 'announcements', label: 'Announcements', icon: 'megaphone' },
-  { id: 'notifications', label: 'Notifications', icon: 'bell' },
-  { id: 'profile', label: 'My Profile', icon: 'user' }
-];
-
-function navIcon(name) {
-  const icons = {
-    grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
-    building: '<path d="M3 21V5l9-3 9 3v16M7 9h2M7 13h2M7 17h2M15 9h2M15 13h2M15 17h2M11 21v-4h2v4"/>',
-    door: '<path d="M4 21V3h16v18M8 21V7h8v14M13 14h.01"/>',
-    users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
-    document: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>',
-    receipt: '<path d="M6 2l2 2 2-2 2 2 2-2 2 2 2-2v20l-2-2-2 2-2-2-2 2-2-2-2 2zM8 8h8M8 12h8M8 16h5"/>',
-    card: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/>',
-    tool: '<path d="M14.7 6.3a4 4 0 0 0-5-5l2.1 2.1-3.5 3.5-2.1-2.1a4 4 0 0 0 5 5l7.1 7.1a2 2 0 0 0 2.8-2.8z"/>',
-    megaphone: '<path d="M3 11v2a2 2 0 0 0 2 2h3l9 4V5l-9 4H5a2 2 0 0 0-2 2zM8 15l1 5h3l-1-4"/>',
-    bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
-    chart: '<path d="M3 3v18h18M7 16v-4M12 16V8M17 16V5"/>',
-    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.8 1.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2H12v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L7.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 6 14H5.8v-2H6a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L7.2 9l1.8-1.8.1.1A1.7 1.7 0 0 0 11 7a1.7 1.7 0 0 0 1-1.6v-.2h2v.2A1.7 1.7 0 0 0 15 7a1.7 1.7 0 0 0 1.9-.3l.1-.1L18.8 9l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v2H20a1.7 1.7 0 0 0-.6 1z"/>',
-    home: '<path d="M3 11l9-8 9 8M5 10v11h14V10M9 21v-6h6v6"/>',
-    plus: '<path d="M12 5v14M5 12h14"/>',
-    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'
-  };
-  return `<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.grid}</svg>`;
-}
-
-/* ---------- Auth Logic ---------- */
-function initAuth() {
-  document.querySelectorAll('.auth-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      const mode = tab.dataset.authTab;
-      document.getElementById('auth-login-panel').classList.toggle('hidden', mode !== 'login');
-      document.getElementById('auth-signup-panel').classList.toggle('hidden', mode !== 'signup');
-      document.getElementById('auth-pending-panel').classList.add('hidden');
-    });
-  });
-
-  document.getElementById('login-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const email = document.getElementById('login-email').value.trim().toLowerCase();
-    handleLogin(email);
-  });
-
-  document.getElementById('demo-admin-btn').addEventListener('click', () => handleLogin('manager@gmail.com'));
-  document.getElementById('demo-tenant-btn').addEventListener('click', () => handleLogin('juan.delacruz@gmail.com'));
-
-  document.getElementById('signup-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const name = document.getElementById('signup-name').value.trim();
-    const email = document.getElementById('signup-email').value.trim().toLowerCase();
-    const errEl = document.getElementById('signup-error');
-
-    if (!email.endsWith('@gmail.com')) {
-      errEl.textContent = 'Only verified @gmail.com addresses are allowed.';
-      errEl.classList.remove('hidden');
-      return;
+/* ---------------------------------------------------------
+   4. Service layer — every screen talks to these, never to db directly.
+      Replace bodies with fetch('/api/...') calls when the backend exists.
+   --------------------------------------------------------- */
+const services = {
+  auth: {
+    /** DEMO: simulates Google OAuth + backend verification. */
+    async signInWithGoogle(scenario) {
+      await wait(700);
+      if (scenario === 'manager') return { user: db.users[0] };
+      if (scenario === 'tenant') return { user: db.users[1] };
+      if (scenario === 'domain') return { error: 'Only verified @gmail.com accounts can sign in. You used juan.cruz@company.ph.' };
+      if (scenario === 'pending') return { pending: true, email: 'new.tenant@gmail.com' };
+      return { error: 'Google sign-in was cancelled or failed. Please try again.' };
     }
-    errEl.classList.add('hidden');
+  },
 
-    // Check if tenant record already exists for automatic linking
-    const existingTenant = state.tenants.find(t => t.email.toLowerCase() === email);
-    if (existingTenant) {
-      const newUser = { id: uid('u'), email, name: existingTenant.fullName, role: 'tenant', tenantId: existingTenant.id, isActive: true };
-      state.users.push(newUser);
-      existingTenant.userId = newUser.id;
-      saveState();
-      showToast('Account linked to your tenant record!');
-      enterApp(newUser);
-    } else {
-      document.getElementById('auth-signup-panel').classList.add('hidden');
-      document.getElementById('auth-pending-panel').classList.remove('hidden');
-      document.getElementById('pending-email-text').textContent =
-        `${name} (${email}) is authenticated with Google, but is not yet linked to an authorized tenant or staff record.`;
-    }
-  });
-
-  document.getElementById('back-to-login-btn').addEventListener('click', () => {
-    document.getElementById('auth-pending-panel').classList.add('hidden');
-    document.getElementById('auth-login-panel').classList.remove('hidden');
-    document.querySelectorAll('.auth-tab')[0].click();
-  });
-}
-
-function handleLogin(email) {
-  const errEl = document.getElementById('login-error');
-  if (!email.endsWith('@gmail.com')) {
-    errEl.textContent = 'Strict Gmail policy: please use a @gmail.com email address.';
-    errEl.classList.remove('hidden');
-    return;
-  }
-  const user = state.users.find(u => u.email.toLowerCase() === email);
-  if (!user) {
-    document.getElementById('auth-login-panel').classList.add('hidden');
-    document.getElementById('auth-pending-panel').classList.remove('hidden');
-    document.getElementById('pending-email-text').textContent =
-      `The Google account (${email}) is not yet authorized. Ask your administrator to link your account.`;
-    return;
-  }
-  errEl.classList.add('hidden');
-  enterApp(user);
-}
-
-function enterApp(user) {
-  currentUser = user;
-  currentRoute = 'dashboard';
-  document.getElementById('auth-view').classList.add('hidden');
-  document.getElementById('app-shell').classList.remove('hidden');
-
-  document.getElementById('role-badge-text').textContent = user.role === 'admin' ? 'Admin / Manager' : 'Tenant Portal';
-  document.getElementById('user-name').textContent = user.name;
-  document.getElementById('user-email').textContent = user.email;
-  document.getElementById('user-avatar').textContent = user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-
-  renderSidebar();
-  renderNotificationBell();
-  navigate('dashboard');
-}
-
-function logout() {
-  currentUser = null;
-  document.getElementById('app-shell').classList.add('hidden');
-  document.getElementById('auth-view').classList.remove('hidden');
-  showToast('Signed out successfully.');
-}
-
-/* ---------- Shell & Navigation ---------- */
-function renderSidebar() {
-  const items = currentUser.role === 'admin' ? ADMIN_NAV : TENANT_NAV;
-  const unreadNotifs = state.notifications.filter(n => n.userId === currentUser.id && !n.isRead).length;
-  const openConcerns = currentUser.role === 'admin'
-    ? state.concerns.filter(c => !['Resolved', 'Closed'].includes(c.status)).length
-    : state.concerns.filter(c => c.tenantId === currentUser.tenantId && !['Resolved', 'Closed'].includes(c.status)).length;
-
-  const nav = document.getElementById('sidebar-nav');
-  nav.innerHTML = items.map(item => {
-    let count = '';
-    if (item.id === 'notifications' && unreadNotifs > 0) count = `<span class="nav-count">${unreadNotifs}</span>`;
-    if ((item.id === 'concerns' || item.id === 'my-concerns') && openConcerns > 0) count = `<span class="nav-count">${openConcerns}</span>`;
-    return `
-      <button class="nav-item ${currentRoute === item.id ? 'active' : ''}" data-route="${item.id}" ${currentRoute === item.id ? 'aria-current="page"' : ''}>
-        <span class="nav-item-left">${navIcon(item.icon)}<span>${item.label}</span></span>
-        ${count}
-      </button>`;
-  }).join('');
-
-  nav.querySelectorAll('.nav-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      navigate(btn.dataset.route);
-      closeMobileSidebar();
+  async dashboard() {
+    await wait();
+    const units = db.units;
+    const curBills = db.bills.filter((b) => b.period === CURRENT_PERIOD).map((b) => ({ b, c: billCalc(b) }));
+    const count = (s) => curBills.filter((x) => x.c.status === s).length;
+    const billed = curBills.reduce((s, x) => s + x.c.total, 0);
+    const collected = curBills.reduce((s, x) => s + x.c.paid, 0);
+    const outstanding = db.bills.reduce((s, b) => s + billCalc(b).balance, 0);
+    const pendingPayments = db.payments.filter((p) => p.status === 'Pending Verification');
+    const periods = [...new Set(db.bills.map((b) => b.period))].sort().slice(-6);
+    const series = periods.map((p) => {
+      const bills = db.bills.filter((b) => b.period === p).map(billCalc);
+      return { label: monthShort(p), period: p, billed: bills.reduce((s, c) => s + c.total, 0), collected: bills.reduce((s, c) => s + c.paid, 0) };
     });
-  });
-}
-
-function renderNotificationBell() {
-  const myNotifs = state.notifications.filter(n => n.userId === currentUser.id);
-  const unread = myNotifs.filter(n => !n.isRead).length;
-  const badge = document.getElementById('notif-badge');
-  badge.textContent = unread;
-  badge.classList.toggle('hidden', unread === 0);
-
-  const list = document.getElementById('notif-dropdown-list');
-  if (!myNotifs.length) {
-    list.innerHTML = `<div class="empty-state" style="padding:20px;">No notifications yet.</div>`;
-    return;
-  }
-  list.innerHTML = myNotifs.slice(0, 5).map(n => `
-    <button type="button" class="notif-item ${n.isRead ? '' : 'unread'}" data-nid="${n.id}" data-route="${n.targetRoute}">
-      <strong>${n.title}</strong>
-      <span class="muted" style="font-size:12px;">${n.message}</span>
-      <small class="muted">${n.createdAt}</small>
-    </button>
-  `).join('');
-
-  list.querySelectorAll('.notif-item').forEach(el => {
-    el.addEventListener('click', () => {
-      const n = state.notifications.find(x => x.id === el.dataset.nid);
-      if (n) n.isRead = true;
-      saveState();
-      document.getElementById('notif-dropdown').classList.add('hidden');
-      renderNotificationBell();
-      renderSidebar();
-      navigate(el.dataset.route);
-    });
-  });
-}
-
-function navigate(route) {
-  currentRoute = route;
-  renderSidebar();
-  const navItems = currentUser.role === 'admin' ? ADMIN_NAV : TENANT_NAV;
-  const meta = navItems.find(i => i.id === route) || { label: 'Dashboard' };
-  document.getElementById('page-title').textContent = meta.label;
-  document.getElementById('page-subtitle').textContent = currentUser.role === 'admin'
-    ? 'Administrator & Property Manager Portal'
-    : 'Tenant Self-Service Portal';
-
-  const content = document.getElementById('content-area');
-  if (currentUser.role === 'admin') {
-    const views = {
-      dashboard: renderAdminDashboard,
-      properties: renderProperties,
-      units: renderUnits,
-      tenants: renderTenants,
-      contracts: renderContracts,
-      billing: renderBilling,
-      payments: renderPayments,
-      concerns: renderAdminConcerns,
-      announcements: renderAnnouncements,
-      notifications: renderNotificationsPage,
-      reports: renderReports,
-      settings: renderSettings
+    return {
+      kpi: {
+        properties: db.properties.length,
+        units: units.length,
+        occupied: units.filter((u) => u.status === 'Occupied').length,
+        available: units.filter((u) => u.status === 'Available').length,
+        maintenance: units.filter((u) => u.status === 'Under Maintenance').length,
+        tenants: db.tenants.filter((t) => activeLeaseOfTenant(t.id)).length,
+        unlinked: db.tenants.filter((t) => !t.userId).length,
+        paid: count('Paid'), partial: count('Partially Paid'), unpaid: count('Unpaid'), overdue: count('Overdue'),
+        overdueAmount: curBills.filter((x) => x.c.status === 'Overdue').reduce((s, x) => s + x.c.balance, 0),
+        bills: curBills.length, billed, collected, outstanding,
+        pendingCount: pendingPayments.length,
+        openConcerns: db.concerns.filter((c) => !['Resolved', 'Closed'].includes(c.status)).length,
+        unassigned: db.concerns.filter((c) => !c.assignedTo && !['Resolved', 'Closed'].includes(c.status)).length
+      },
+      series,
+      recentPayments: [...db.payments].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5),
+      dueBills: db.bills.map((b) => ({ b, c: billCalc(b) })).filter((x) => x.c.balance > 0).sort((a, b) => a.b.due.localeCompare(b.b.due)).slice(0, 5),
+      expiring: db.leases.filter((l) => ['Expiring Soon', 'Pending'].includes(leaseStatus(l))).sort((a, b) => a.end.localeCompare(b.end)).slice(0, 5),
+      concerns: [...db.concerns].sort((a, b) => b.created.localeCompare(a.created)).slice(0, 5)
     };
-    (views[route] || renderAdminDashboard)(content);
+  },
+
+  async properties() { await wait(); return db.properties; },
+  async units() { await wait(); return db.units; },
+  async tenants() { await wait(); return db.tenants; },
+  async leases() { await wait(); return db.leases; },
+  async bills() { await wait(); return db.bills; },
+  async bill(id) { await wait(); return byId('bills', id); },
+  async payments() { await wait(); return db.payments; },
+  async concerns() { await wait(); return db.concerns; },
+  async concern(id) { await wait(); return byId('concerns', id); },
+  async announcements() { await wait(); return db.announcements; },
+  async notifications(userId) { await wait(80); return db.notifications.filter((n) => n.userId === userId).sort((a, b) => b.at.localeCompare(a.at)); },
+
+  async addBillItem(billId, item) {
+    await wait();
+    const b = byId('bills', billId);
+    b.items.push({ id: uid('I'), ...item });
+    b.log.push({ at: nowISO(), text: `Line item added: ${item.desc} (${peso(item.amount)})`, by: state.user.name, tone: '' });
+  },
+  async removeBillItem(billId, itemId) {
+    await wait();
+    const b = byId('bills', billId);
+    const it = b.items.find((i) => i.id === itemId);
+    b.items = b.items.filter((i) => i.id !== itemId);
+    b.log.push({ at: nowISO(), text: `Line item removed: ${it.desc} (${peso(it.amount)})`, by: state.user.name, tone: 'red' });
+  },
+  /** Manager records a payment against one bill (allocation = min(amount, balance)). */
+  async recordPayment(billId, p) {
+    await wait();
+    const b = byId('bills', billId);
+    const tenant = tenantOfBill(b);
+    const pay = { id: uid('PY'), tenantId: tenant.id, amount: p.amount, date: p.date, method: p.method, ref: p.ref, status: p.verified ? 'Verified' : 'Pending Verification', note: p.note, proof: '', reviewedBy: p.verified ? state.user.name : '' };
+    db.payments.push(pay);
+    db.allocations.push({ paymentId: pay.id, billId, amount: Math.min(p.amount, billCalc(b).balance) || p.amount });
+    b.log.push({ at: nowISO(), text: `Payment of ${peso(p.amount)} recorded${p.verified ? ' and verified' : ''}`, by: state.user.name, tone: p.verified ? 'green' : 'amber' });
+    if (p.verified) notifyTenant(tenant.id, 'Payment verified', `Your ${peso(p.amount)} payment was recorded and verified.`, `/tenant/bills/${billId}`);
+  },
+  async verifyPayment(paymentId) {
+    await wait();
+    const p = byId('payments', paymentId);
+    p.status = 'Verified'; p.reviewedBy = state.user.name;
+    db.allocations.filter((a) => a.paymentId === p.id).forEach((a) => {
+      const b = byId('bills', a.billId);
+      b.log.push({ at: nowISO(), text: `Payment of ${peso(a.amount)} verified and allocated · bill is now ${billCalc(b).status}`, by: state.user.name, tone: 'green' });
+    });
+    notifyTenant(p.tenantId, 'Payment verified', `Your ${peso(p.amount)} payment (${p.method}) was verified.`, '/tenant/payments');
+  },
+  async rejectPayment(paymentId, reason) {
+    await wait();
+    const p = byId('payments', paymentId);
+    p.status = 'Rejected'; p.reviewedBy = state.user.name; p.reason = reason;
+    db.allocations.filter((a) => a.paymentId === p.id).forEach((a) => {
+      byId('bills', a.billId).log.push({ at: nowISO(), text: `Payment of ${peso(a.amount)} rejected: ${reason}`, by: state.user.name, tone: 'red' });
+    });
+    notifyTenant(p.tenantId, 'Payment rejected', `Your ${peso(p.amount)} payment was rejected: ${reason}`, '/tenant/payments');
+  },
+  async replyConcern(concernId, text) {
+    await wait();
+    const c = byId('concerns', concernId);
+    db.messages.push({ id: uid('M'), concernId, senderId: state.user.id, text, at: nowISO() });
+    if (state.user.role === 'manager') notifyTenant(c.tenantId, 'New reply on your concern', `${state.user.name} replied to “${c.title}”.`, `/tenant/concerns/${c.id}`);
+    else notifyManagers('Tenant replied', `${byId('tenants', c.tenantId).name} replied on “${c.title}”.`, `/admin/concerns/${c.id}`);
+  },
+  async updateConcern(concernId, { status, assignedTo }) {
+    await wait();
+    const c = byId('concerns', concernId);
+    if (assignedTo !== undefined && assignedTo !== (c.assignedTo || '')) {
+      c.assignedTo = assignedTo || null;
+      const who = assignedTo ? userById(assignedTo).name : 'nobody';
+      db.messages.push({ id: uid('M'), concernId, senderId: 'system', text: `Assigned to ${who}`, at: nowISO() });
+    }
+    if (status && status !== c.status) {
+      c.status = status;
+      db.messages.push({ id: uid('M'), concernId, senderId: 'system', text: `Status changed to ${status}`, at: nowISO() });
+      notifyTenant(c.tenantId, 'Concern status updated', `“${c.title}” is now ${status}.`, `/tenant/concerns/${c.id}`);
+    }
+  },
+  async createConcern(tenantId, data) {
+    await wait(300);
+    const lease = activeLeaseOfTenant(tenantId);
+    const id = 'CN-' + String(191 + db.concerns.length).padStart(4, '0');
+    db.concerns.push({ id, tenantId, unitId: lease ? lease.unitId : null, title: data.title, category: data.category, status: 'Pending', assignedTo: null, created: nowISO(), attachment: data.attachment });
+    db.messages.push({ id: uid('M'), concernId: id, senderId: state.user.id, text: data.description, at: nowISO(), attachment: data.attachment });
+    notifyManagers('New concern', `${data.title} · ${lease ? unitLabel(lease.unitId) : ''}`, `/admin/concerns/${id}`);
+    return id;
+  },
+  async publishAnnouncement(data) {
+    await wait(300);
+    const a = { id: uid('AN'), createdBy: state.user.id, ...data };
+    db.announcements.unshift(a);
+    let count = 0;
+    if (data.publish <= isoDate(TODAY)) {
+      db.tenants.filter((t) => announcementTargetsTenant(a, t.id)).forEach((t) => {
+        count++;
+        notifyTenant(t.id, 'New announcement', a.title, '/tenant/announcements');
+      });
+    }
+    return count;
+  },
+  async markRead(id) { await wait(40); const n = byId('notifications', id); if (n) n.read = true; },
+  async markAllRead(userId) { await wait(80); db.notifications.filter((n) => n.userId === userId).forEach((n) => { n.read = true; }); }
+};
+
+/* In-app notifications only go to tenants who have a linked account */
+function notifyTenant(tenantId, title, message, link) {
+  const t = byId('tenants', tenantId);
+  if (!t || !t.userId) return;
+  db.notifications.push({ id: uid('N'), userId: t.userId, title, message, type: 'info', link, read: false, at: nowISO() });
+}
+function notifyManagers(title, message, link) {
+  db.users.filter((u) => u.role === 'manager').forEach((u) => db.notifications.push({ id: uid('N'), userId: u.id, title, message, type: 'info', link, read: false, at: nowISO() }));
+}
+
+/* ---------------------------------------------------------
+   5. UI components
+   --------------------------------------------------------- */
+const TONES = {
+  'Paid': ['green', 'check'], 'Verified': ['green', 'check'], 'Resolved': ['green', 'check'], 'Active': ['green', 'check'], 'Available': ['green', 'check'],
+  'Partially Paid': ['amber', 'half'], 'Pending Verification': ['amber', 'clock'], 'Pending': ['amber', 'clock'], 'Expiring Soon': ['amber', 'clock'],
+  'Unpaid': ['gray', 'circle'], 'Closed': ['gray', 'check'], 'Expired': ['gray', 'circle'], 'Under Maintenance': ['gray', 'gear'], 'Occupied': ['blue', 'user'],
+  'Overdue': ['red', 'alert'], 'Rejected': ['red', 'x'], 'Terminated': ['red', 'x'],
+  'In Progress': ['blue', 'arrow'], 'Acknowledged': ['blue', 'check']
+};
+const badge = (status) => { const [tone, ic] = TONES[status] || ['gray', 'circle']; return `<span class="badge ${tone}">${icon(ic, 14, 2.2)}${esc(status)}</span>`; };
+
+const statCard = (label, value, sub = '', tone = '') =>
+  `<div class="card stat"><div class="label">${esc(label)}</div><div class="value ${tone}">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
+
+const emptyState = (title, text = '', action = '', ic = 'grid') =>
+  `<div class="state"><div class="state-icon">${icon(ic, 26)}</div><h2>${esc(title)}</h2>${text ? `<p>${esc(text)}</p>` : ''}${action}</div>`;
+
+const errorState = (text) =>
+  `<div class="card"><div class="state error"><div class="state-icon">${icon('alert', 26)}</div><h2>Something went wrong</h2><p>${esc(text)}</p><button class="btn btn-outline" data-action="reload">${icon('refresh')}Try again</button></div></div>`;
+
+const loadingState = () =>
+  `<div class="content" aria-busy="true"><span class="sr-only">Loading…</span><div class="skeleton"><div class="sk" style="height:110px"></div><div class="grid grid-2"><div class="sk" style="height:220px"></div><div class="sk" style="height:220px"></div></div><div class="sk" style="height:260px"></div></div></div>`;
+
+/**
+ * Table with client-side search/filter (data-row + data-f-*) and sortable headers.
+ * cols: [{ label, cell(row) -> html, num?, sortValue?(row), cls? }]
+ */
+function dataTable({ cols, rows, rowAttrs = () => '', empty = ['No records yet', ''], minWidth = 680 }) {
+  if (!rows.length) return emptyState(empty[0], empty[1], empty[2] || '', empty[3] || 'grid');
+  const head = cols.map((c, i) => `<th scope="col" class="${c.num ? 'num-r' : ''}" ${c.sortValue ? 'aria-sort="none"' : ''}>${c.sortValue
+    ? `<button type="button" class="th" data-action="sort" data-col="${i}">${esc(c.label)}${icon('sort', 14)}</button>`
+    : `<span class="th">${esc(c.label)}</span>`}</th>`).join('');
+  const body = rows.map((r) => `<tr ${rowAttrs(r)}>${cols.map((c, i) =>
+    `<td data-label="${esc(c.label)}" class="${c.num ? 'num-r' : ''} ${c.cls || ''}" ${c.sortValue ? `data-sort="${esc(c.sortValue(r))}"` : ''}><div class="cv">${c.cell(r)}</div></td>`).join('')}</tr>`).join('');
+  return `<div class="table-wrap"><table class="table" style="min-width:${minWidth}px"><thead><tr>${head}</tr></thead><tbody>${body}<tr data-nomatch hidden><td colspan="${cols.length}" class="nomatch">No records match your search or filters.</td></tr></tbody></table></div>`;
+}
+
+const searchBox = (placeholder) =>
+  `<div class="search"><label class="sr-only" for="q">Search</label>${icon('search', 16)}<input id="q" type="search" placeholder="${esc(placeholder)}" data-filter="q" autocomplete="off"></div>`;
+const filterSelect = (key, label, options) =>
+  `<label class="inline">${esc(label)}<select data-filter="${key}"><option value="">All</option>${options.map((o) => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}">${esc(l)}</option>`; }).join('')}</select></label>`;
+
+function field({ id, label, type = 'text', required = false, help = '', options = [], value = '', attrs = '' }) {
+  const req = required ? '<span class="req" aria-hidden="true">*</span><span class="sr-only"> (required)</span>' : '';
+  const desc = `aria-describedby="${help ? id + '-help ' : ''}${id}-err"`;
+  let control;
+  if (type === 'select') {
+    control = `<select id="${id}" name="${id}" ${required ? 'required' : ''} ${desc} ${attrs}>${options.map((o) => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}" ${String(v) === String(value) ? 'selected' : ''}>${esc(l)}</option>`; }).join('')}</select>`;
+  } else if (type === 'textarea') {
+    control = `<textarea id="${id}" name="${id}" ${required ? 'required' : ''} ${desc} ${attrs}>${esc(value)}</textarea>`;
   } else {
-    const views = {
-      dashboard: renderTenantDashboard,
-      'my-contract': renderTenantContract,
-      'my-bills': renderTenantBills,
-      'my-payments': renderTenantPayments,
-      'raise-concern': renderRaiseConcern,
-      'my-concerns': renderTenantConcerns,
-      announcements: renderAnnouncements,
-      notifications: renderNotificationsPage,
-      profile: renderTenantProfile
-    };
-    (views[route] || renderTenantDashboard)(content);
+    control = `<input id="${id}" name="${id}" type="${type}" value="${esc(value)}" ${required ? 'required' : ''} ${desc} ${attrs}>`;
   }
+  return `<div class="field"><label for="${id}">${esc(label)}${req}</label>${control}${help ? `<p class="help" id="${id}-help">${help}</p>` : ''}<p class="error" id="${id}-err" hidden></p></div>`;
 }
 
-/* ==========================================================================
-   ADMIN / MANAGER VIEWS
-   ========================================================================== */
-function renderAdminDashboard(el) {
-  const totalProps = state.properties.length;
-  const totalUnits = state.units.length;
-  const occupiedUnits = state.units.filter(u => u.status === 'Occupied').length;
-  const availableUnits = state.units.filter(u => u.status === 'Available').length;
-  const billStats = state.bills.map(b => ({ bill: b, ...getBillMetrics(b) }));
-  const paidCount = billStats.filter(b => b.status === 'Paid').length;
-  const unpaidCount = billStats.filter(b => b.status === 'Unpaid' || b.status === 'Partially Paid').length;
-  const overdueCount = billStats.filter(b => b.status === 'Overdue').length;
-  const totalCollections = state.payments.filter(p => p.status === 'Verified').reduce((s, p) => s + Number(p.amount), 0);
-
-  const expiringLeases = state.leases.filter(l => l.status === 'Expiring Soon');
-  const openConcerns = state.concerns.filter(c => !['Resolved', 'Closed'].includes(c.status));
-
-  el.innerHTML = `
-    <div class="kpi-grid">
-      <div class="kpi-card"><div class="kpi-label">Total Collections</div><div class="kpi-value">${peso(totalCollections)}</div><div class="kpi-sub">Verified payments</div></div>
-      <div class="kpi-card"><div class="kpi-label">Properties / Units</div><div class="kpi-value">${totalProps} / ${totalUnits}</div><div class="kpi-sub">${occupiedUnits} Occupied • ${availableUnits} Available</div></div>
-      <div class="kpi-card"><div class="kpi-label">Total Tenants</div><div class="kpi-value">${state.tenants.length}</div><div class="kpi-sub">${state.leases.filter(l => ['Active','Expiring Soon'].includes(l.status)).length} Active leases</div></div>
-      <div class="kpi-card"><div class="kpi-label">Paid / Unpaid Bills</div><div class="kpi-value">${paidCount} / ${unpaidCount}</div><div class="kpi-sub">${overdueCount} Overdue bill(s)</div></div>
-    </div>
-
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-header"><h3 class="card-title">Monthly Collections (₱)</h3></div>
-        <div class="card-body">
-          <div class="bar-chart">
-            ${[
-              { m: 'Aug', v: 16500 },
-              { m: 'Sep', v: 18200 },
-              { m: 'Oct', v: 5000 },
-              { m: 'Nov', v: totalCollections - 5000 > 0 ? totalCollections - 5000 : 3000 }
-            ].map(d => `
-              <div class="bar-col">
-                <span class="bar-val">${peso(d.v).replace('.00','')}</span>
-                <div class="bar-fill" style="height:${Math.min(100, Math.round((d.v / 22000) * 100))}%"></div>
-                <span class="bar-lbl">${d.m}</span>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header"><h3 class="card-title">Bill Status Distribution</h3></div>
-        <div class="card-body">
-          ${[
-            { label: 'Paid', count: paidCount, color: '#1E7E34' },
-            { label: 'Unpaid / Partially Paid', count: unpaidCount, color: '#B45309' },
-            { label: 'Overdue', count: overdueCount, color: '#B91C1C' }
-          ].map(row => {
-            const pct = state.bills.length ? Math.round((row.count / state.bills.length) * 100) : 0;
-            return `
-              <div class="progress-row">
-                <div class="progress-head"><span>${row.label}</span><strong>${row.count} (${pct}%)</strong></div>
-                <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${row.color};"></div></div>
-              </div>`;
-          }).join('')}
-        </div>
-      </div>
-    </div>
-
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Overdue & Unpaid Bills</h3>
-          <button class="link-btn" onclick="navigate('billing')">View all</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Tenant</th><th>Period</th><th>Balance</th><th>Status</th></tr></thead>
-            <tbody>
-              ${billStats.filter(b => b.balance > 0).map(b => {
-                const lease = getLease(b.bill.leaseId);
-                const tenant = getTenant(lease?.tenantId);
-                return `<tr>
-                  <td>${tenant?.fullName || '—'}</td>
-                  <td>${b.bill.billingPeriod}</td>
-                  <td class="font-mono">${peso(b.balance)}</td>
-                  <td>${statusBadge(b.status)}</td>
-                </tr>`;
-              }).join('') || `<tr><td colspan="4" class="empty-state">All bills are settled!</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Expiring Contracts & Open Concerns</h3>
-          <button class="link-btn" onclick="navigate('concerns')">Open inbox</button>
-        </div>
-        <div class="card-body stack-md">
-          <div>
-            <strong style="font-size:12.5px;" class="muted">CONTRACTS EXPIRING SOON (${expiringLeases.length})</strong>
-            ${expiringLeases.map(l => `
-              <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
-                <span>${getTenant(l.tenantId)?.fullName} • ${getUnit(l.unitId)?.name}</span>
-                <span class="muted">Ends ${l.endDate}</span>
-              </div>
-            `).join('') || `<p class="muted">No contracts expiring soon.</p>`}
-          </div>
-          <div>
-            <strong style="font-size:12.5px;" class="muted">NEWEST OPEN CONCERNS (${openConcerns.length})</strong>
-            ${openConcerns.slice(0, 3).map(c => `
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
-                <span>${c.title} <small class="muted">(${c.category})</small></span>
-                ${statusBadge(c.status)}
-              </div>
-            `).join('') || `<p class="muted">No open concerns.</p>`}
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderProperties(el) {
-  el.innerHTML = `
-    <div class="toolbar">
-      <input type="search" id="prop-search" placeholder="Search properties..." />
-      <button class="btn btn-primary" id="add-prop-btn">+ Add Property</button>
-    </div>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Property Name</th><th>Address</th><th>Units</th><th>Occupancy</th><th>Description</th></tr></thead>
-          <tbody id="prop-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  `;
-
-  const renderRows = (q = '') => {
-    const filtered = state.properties.filter(p => (p.name + p.address).toLowerCase().includes(q.toLowerCase()));
-    document.getElementById('prop-tbody').innerHTML = filtered.map(p => {
-      const units = state.units.filter(u => u.propertyId === p.id);
-      const occ = units.filter(u => u.status === 'Occupied').length;
-      return `<tr>
-        <td><strong>${p.name}</strong></td>
-        <td>${p.address}</td>
-        <td>${units.length}</td>
-        <td>${occ} / ${units.length} Occupied</td>
-        <td class="muted">${p.description}</td>
-      </tr>`;
-    }).join('') || `<tr><td colspan="5" class="empty-state">No properties found.</td></tr>`;
-  };
-  renderRows();
-
-  document.getElementById('prop-search').addEventListener('input', e => renderRows(e.target.value));
-  document.getElementById('add-prop-btn').addEventListener('click', () => {
-    openModal('Add Property', `
-      <form id="prop-form" class="stack-md">
-        <div class="form-group"><label>Property Name <span class="req">*</span></label><input id="pf-name" required /></div>
-        <div class="form-group"><label>Address <span class="req">*</span></label><input id="pf-address" required /></div>
-        <div class="form-group"><label>Description</label><textarea id="pf-desc" rows="3"></textarea></div>
-        <div class="btn-row"><button type="submit" class="btn btn-primary">Save Property</button><button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button></div>
-      </form>
-    `);
-    document.getElementById('prop-form').addEventListener('submit', e => {
-      e.preventDefault();
-      state.properties.push({
-        id: uid('p'),
-        name: document.getElementById('pf-name').value.trim(),
-        address: document.getElementById('pf-address').value.trim(),
-        description: document.getElementById('pf-desc').value.trim()
-      });
-      saveState();
-      closeModal();
-      showToast('Property added.');
-      renderProperties(el);
-    });
+/** Validate a form. rules: { fieldId: (value, form) => errorMessage | '' } */
+function validate(form, rules) {
+  const errors = [];
+  Object.entries(rules).forEach(([id, rule]) => {
+    const el = form.elements[id];
+    const msg = rule(el.type === 'checkbox' ? el.checked : el.value.trim(), form);
+    const err = $(`#${id}-err`, form);
+    el.setAttribute('aria-invalid', msg ? 'true' : 'false');
+    if (err) { err.hidden = !msg; err.innerHTML = msg ? `${icon('alert', 14, 2.2)}${esc(msg)}` : ''; }
+    if (msg) shake(el);
+    if (msg) errors.push({ id, msg, label: form.querySelector(`label[for="${id}"]`)?.textContent.replace('*', '').replace('(required)', '').trim() });
   });
-}
-
-function renderUnits(el) {
-  el.innerHTML = `
-    <div class="toolbar">
-      <div class="toolbar-filters">
-        <select id="unit-status-filter">
-          <option value="">All Statuses</option>
-          <option value="Available">Available</option>
-          <option value="Occupied">Occupied</option>
-          <option value="Under Maintenance">Under Maintenance</option>
-        </select>
-      </div>
-      <button class="btn btn-primary" id="add-unit-btn">+ Add Unit</button>
-    </div>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Unit</th><th>Property</th><th>Type</th><th>Monthly Rent</th><th>Status</th><th>Notes</th></tr></thead>
-          <tbody id="unit-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  `;
-
-  const renderRows = (status = '') => {
-    const list = state.units.filter(u => !status || u.status === status);
-    document.getElementById('unit-tbody').innerHTML = list.map(u => `
-      <tr>
-        <td><strong>${u.name}</strong></td>
-        <td>${getProperty(u.propertyId)?.name || '—'}</td>
-        <td>${u.type}</td>
-        <td class="font-mono">${peso(u.rent)}</td>
-        <td>${statusBadge(u.status)}</td>
-        <td class="muted">${u.notes || '—'}</td>
-      </tr>
-    `).join('') || `<tr><td colspan="6" class="empty-state">No units match the filter.</td></tr>`;
-  };
-  renderRows();
-
-  document.getElementById('unit-status-filter').addEventListener('change', e => renderRows(e.target.value));
-  document.getElementById('add-unit-btn').addEventListener('click', () => {
-    openModal('Add Unit / Space', `
-      <form id="unit-form" class="form-grid">
-        <div class="form-group"><label>Property <span class="req">*</span></label>
-          <select id="uf-prop" required>${state.properties.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select>
-        </div>
-        <div class="form-group"><label>Unit Name / No. <span class="req">*</span></label><input id="uf-name" placeholder="e.g., Unit 202" required /></div>
-        <div class="form-group"><label>Unit Type</label><input id="uf-type" placeholder="Studio / 1-Bedroom" value="Studio" /></div>
-        <div class="form-group"><label>Monthly Rent (₱) <span class="req">*</span></label><input type="number" id="uf-rent" min="0" required /></div>
-        <div class="form-group"><label>Status</label>
-          <select id="uf-status"><option>Available</option><option>Occupied</option><option>Under Maintenance</option></select>
-        </div>
-        <div class="form-group"><label>Notes</label><input id="uf-notes" /></div>
-        <div class="form-group full btn-row"><button type="submit" class="btn btn-primary">Save Unit</button><button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button></div>
-      </form>
-    `);
-    document.getElementById('unit-form').addEventListener('submit', e => {
-      e.preventDefault();
-      state.units.push({
-        id: uid('un'),
-        propertyId: document.getElementById('uf-prop').value,
-        name: document.getElementById('uf-name').value.trim(),
-        type: document.getElementById('uf-type').value.trim(),
-        rent: Number(document.getElementById('uf-rent').value),
-        status: document.getElementById('uf-status').value,
-        notes: document.getElementById('uf-notes').value.trim()
-      });
-      saveState();
-      closeModal();
-      showToast('Unit added.');
-      renderUnits(el);
-    });
-  });
-}
-
-function renderTenants(el) {
-  el.innerHTML = `
-    <div class="toolbar">
-      <input type="search" id="tenant-search" placeholder="Search tenants..." />
-      <button class="btn btn-primary" id="add-tenant-btn">+ Add Tenant</button>
-    </div>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Full Name</th><th>Email</th><th>Contact</th><th>Google Account</th><th>Active Unit</th></tr></thead>
-          <tbody id="tenant-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  `;
-
-  const renderRows = (q = '') => {
-    const list = state.tenants.filter(t => (t.fullName + t.email).toLowerCase().includes(q.toLowerCase()));
-    document.getElementById('tenant-tbody').innerHTML = list.map(t => {
-      const lease = state.leases.find(l => l.tenantId === t.id && ['Active', 'Expiring Soon'].includes(l.status));
-      const unit = lease ? getUnit(lease.unitId)?.name : 'None';
-      return `<tr>
-        <td><strong>${t.fullName}</strong></td>
-        <td>${t.email}</td>
-        <td>${t.contact}</td>
-        <td>${t.userId ? statusBadge('Active') : statusBadge('Pending')}</td>
-        <td>${unit}</td>
-      </tr>`;
-    }).join('') || `<tr><td colspan="5" class="empty-state">No tenants found.</td></tr>`;
-  };
-  renderRows();
-
-  document.getElementById('tenant-search').addEventListener('input', e => renderRows(e.target.value));
-  document.getElementById('add-tenant-btn').addEventListener('click', () => {
-    openModal('Add Tenant', `
-      <form id="tenant-form" class="form-grid">
-        <div class="form-group"><label>Full Name <span class="req">*</span></label><input id="tf-name" required /></div>
-        <div class="form-group"><label>Gmail Address <span class="req">*</span></label><input type="email" id="tf-email" placeholder="tenant@gmail.com" required /></div>
-        <div class="form-group"><label>Contact Number <span class="req">*</span></label><input id="tf-contact" required /></div>
-        <div class="form-group"><label>Emergency Contact</label><input id="tf-emergency" /></div>
-        <div class="form-group full"><label>Address</label><input id="tf-address" /></div>
-        <div class="form-group full btn-row"><button type="submit" class="btn btn-primary">Save Tenant</button><button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button></div>
-      </form>
-    `);
-    document.getElementById('tenant-form').addEventListener('submit', e => {
-      e.preventDefault();
-      state.tenants.push({
-        id: uid('t'), userId: null,
-        fullName: document.getElementById('tf-name').value.trim(),
-        email: document.getElementById('tf-email').value.trim(),
-        contact: document.getElementById('tf-contact').value.trim(),
-        emergencyContact: document.getElementById('tf-emergency').value.trim(),
-        address: document.getElementById('tf-address').value.trim()
-      });
-      saveState();
-      closeModal();
-      showToast('Tenant record created.');
-      renderTenants(el);
-    });
-  });
-}
-
-function renderContracts(el) {
-  el.innerHTML = `
-    <div class="toolbar">
-      <span class="muted">Historical leases are preserved; renewals create new records.</span>
-      <button class="btn btn-primary" id="add-lease-btn">+ Create Contract</button>
-    </div>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Tenant</th><th>Property / Unit</th><th>Term</th><th>Duration</th><th>Monthly Rent</th><th>Deposit</th><th>Status</th><th>Action</th></tr></thead>
-          <tbody>
-            ${state.leases.map(l => {
-              const unit = getUnit(l.unitId);
-              const prop = getProperty(unit?.propertyId);
-              return `<tr>
-                <td><strong>${getTenant(l.tenantId)?.fullName || '—'}</strong></td>
-                <td>${prop?.name || ''} — ${unit?.name || ''}</td>
-                <td>${l.startDate} to ${l.endDate}</td>
-                <td>${l.durationMonths} mos</td>
-                <td class="font-mono">${peso(l.agreedRent)}</td>
-                <td class="font-mono">${peso(l.deposit)}</td>
-                <td>${statusBadge(l.status)}</td>
-                <td>
-                  ${['Active','Expiring Soon'].includes(l.status)
-                    ? `<button class="btn btn-danger btn-sm" onclick="terminateLease('${l.id}')">Terminate</button>`
-                    : '<span class="muted">—</span>'}
-                </td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('add-lease-btn').addEventListener('click', () => {
-    const availUnits = state.units.filter(u => u.status === 'Available');
-    openModal('Create Lease Contract', `
-      <form id="lease-form" class="form-grid">
-        <div class="form-group"><label>Tenant <span class="req">*</span></label>
-          <select id="lf-tenant" required>${state.tenants.map(t => `<option value="${t.id}">${t.fullName}</option>`).join('')}</select>
-        </div>
-        <div class="form-group"><label>Available Unit <span class="req">*</span></label>
-          <select id="lf-unit" required>${availUnits.length ? availUnits.map(u => `<option value="${u.id}">${getProperty(u.propertyId)?.name} - ${u.name} (${peso(u.rent)})</option>`).join('') : '<option value="">No available units</option>'}</select>
-        </div>
-        <div class="form-group"><label>Start Date <span class="req">*</span></label><input type="date" id="lf-start" value="${todayISO()}" required /></div>
-        <div class="form-group"><label>Duration (Months) <span class="req">*</span></label>
-          <select id="lf-dur"><option value="1">1 Month</option><option value="3">3 Months</option><option value="6">6 Months</option><option value="12" selected>12 Months</option></select>
-        </div>
-        <div class="form-group"><label>Agreed Monthly Rent (₱) <span class="req">*</span></label><input type="number" id="lf-rent" value="${availUnits[0]?.rent || 4000}" required /></div>
-        <div class="form-group"><label>Security Deposit (₱)</label><input type="number" id="lf-dep" value="${(availUnits[0]?.rent || 4000) * 2}" /></div>
-        <div class="form-group full btn-row"><button type="submit" class="btn btn-primary" ${availUnits.length ? '' : 'disabled'}>Create Contract</button><button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button></div>
-      </form>
-    `);
-    document.getElementById('lease-form').addEventListener('submit', e => {
-      e.preventDefault();
-      const unitId = document.getElementById('lf-unit').value;
-      if (!unitId) return;
-      const start = document.getElementById('lf-start').value;
-      const dur = Number(document.getElementById('lf-dur').value);
-      const endObj = new Date(start);
-      endObj.setMonth(endObj.getMonth() + dur);
-      const endDate = endObj.toISOString().slice(0, 10);
-
-      state.leases.unshift({
-        id: uid('l'),
-        tenantId: document.getElementById('lf-tenant').value,
-        unitId,
-        startDate: start,
-        endDate,
-        durationMonths: dur,
-        agreedRent: Number(document.getElementById('lf-rent').value),
-        deposit: Number(document.getElementById('lf-dep').value || 0),
-        status: 'Active',
-        notes: ''
-      });
-      const unit = getUnit(unitId);
-      if (unit) unit.status = 'Occupied';
-      saveState();
-      closeModal();
-      showToast('Lease contract created.');
-      renderContracts(el);
-    });
-  });
-}
-
-window.terminateLease = (leaseId) => {
-  if (!confirm('Are you sure you want to terminate this lease contract?')) return;
-  const lease = getLease(leaseId);
-  if (lease) {
-    lease.status = 'Terminated';
-    const unit = getUnit(lease.unitId);
-    if (unit) unit.status = 'Available';
-    saveState();
-    showToast('Contract terminated and unit marked Available.');
-    navigate('contracts');
+  let summary = $('.error-summary', form);
+  if (errors.length > 1) {
+    if (!summary) { summary = document.createElement('div'); summary.className = 'error-summary'; summary.tabIndex = -1; summary.setAttribute('role', 'alert'); form.prepend(summary); }
+    summary.innerHTML = `<strong>Please fix ${errors.length} problems:</strong><ul>${errors.map((e) => `<li><a href="#${e.id}" data-action="focus-field" data-id="${e.id}">${esc(e.label)}: ${esc(e.msg)}</a></li>`).join('')}</ul>`;
+    summary.focus();
+  } else {
+    summary?.remove();
+    if (errors.length) form.elements[errors[0].id].focus();
   }
-};
-
-function renderBilling(el) {
-  el.innerHTML = `
-    <div class="toolbar">
-      <div class="toolbar-filters">
-        <select id="bill-status-filter">
-          <option value="">All Statuses</option>
-          <option>Paid</option><option>Partially Paid</option><option>Unpaid</option><option>Overdue</option>
-        </select>
-      </div>
-      <button class="btn btn-primary" id="add-bill-btn">+ Generate Bill</button>
-    </div>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Tenant / Unit</th><th>Period</th><th>Due Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Action</th></tr></thead>
-          <tbody id="bill-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  `;
-
-  const renderRows = (filter = '') => {
-    const rows = state.bills.map(b => ({ bill: b, ...getBillMetrics(b) }))
-      .filter(x => !filter || x.status === filter);
-    document.getElementById('bill-tbody').innerHTML = rows.map(x => {
-      const lease = getLease(x.bill.leaseId);
-      const tenant = getTenant(lease?.tenantId);
-      const unit = getUnit(lease?.unitId);
-      return `<tr>
-        <td><strong>${tenant?.fullName || '—'}</strong><br><small class="muted">${unit?.name || ''}</small></td>
-        <td>${x.bill.billingPeriod}</td>
-        <td>${x.bill.dueDate}</td>
-        <td class="font-mono">${peso(x.total)}</td>
-        <td class="font-mono">${peso(x.paid)}</td>
-        <td class="font-mono"><strong>${peso(x.balance)}</strong></td>
-        <td>${statusBadge(x.status)}</td>
-        <td><button class="btn btn-outline btn-sm" onclick="viewBillDetail('${x.bill.id}')">Statement</button></td>
-      </tr>`;
-    }).join('') || `<tr><td colspan="8" class="empty-state">No bills found.</td></tr>`;
-  };
-  renderRows();
-
-  document.getElementById('bill-status-filter').addEventListener('change', e => renderRows(e.target.value));
-  document.getElementById('add-bill-btn').addEventListener('click', () => {
-    const activeLeases = state.leases.filter(l => ['Active', 'Expiring Soon'].includes(l.status));
-    openModal('Generate Recurring Bill', `
-      <form id="bill-form" class="stack-md">
-        <div class="form-grid">
-          <div class="form-group"><label>Active Lease <span class="req">*</span></label>
-            <select id="bf-lease" required>${activeLeases.map(l => `<option value="${l.id}">${getTenant(l.tenantId)?.fullName} — ${getUnit(l.unitId)?.name} (${peso(l.agreedRent)})</option>`).join('')}</select>
-          </div>
-          <div class="form-group"><label>Billing Period <span class="req">*</span></label><input type="month" id="bf-period" value="2026-12" required /></div>
-          <div class="form-group"><label>Due Date <span class="req">*</span></label><input type="date" id="bf-due" value="2026-12-10" required /></div>
-        </div>
-        <div class="stack-sm">
-          <label style="font-weight:600;font-size:13px;">Additional Charges (Rent is added automatically)</label>
-          <div id="extra-items" class="stack-sm">
-            <div class="form-grid">
-              <input placeholder="Description (e.g., Electricity)" class="ei-desc" value="Electricity" />
-              <input type="number" placeholder="Amount (₱)" class="ei-amt" value="500" />
-            </div>
-            <div class="form-grid">
-              <input placeholder="Description (e.g., Water)" class="ei-desc" value="Water" />
-              <input type="number" placeholder="Amount (₱)" class="ei-amt" value="200" />
-            </div>
-          </div>
-          <button type="button" class="btn btn-outline btn-sm" id="add-line-item-btn">+ Add Custom Charge</button>
-        </div>
-        <div class="btn-row"><button type="submit" class="btn btn-primary">Publish Bill</button><button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button></div>
-      </form>
-    `);
-
-    document.getElementById('add-line-item-btn').addEventListener('click', () => {
-      const row = document.createElement('div');
-      row.className = 'form-grid';
-      row.innerHTML = `<input placeholder="Charge description" class="ei-desc" /><input type="number" placeholder="Amount (₱)" class="ei-amt" />`;
-      document.getElementById('extra-items').appendChild(row);
-    });
-
-    document.getElementById('bill-form').addEventListener('submit', e => {
-      e.preventDefault();
-      const lease = getLease(document.getElementById('bf-lease').value);
-      const items = [{ description: 'Monthly Rent', category: 'Rent', amount: lease.agreedRent }];
-      const descs = document.querySelectorAll('.ei-desc');
-      const amts = document.querySelectorAll('.ei-amt');
-      descs.forEach((d, idx) => {
-        const amt = Number(amts[idx].value);
-        if (d.value.trim() && amt > 0) items.push({ description: d.value.trim(), category: 'Other Charges', amount: amt });
-      });
-
-      const bill = {
-        id: uid('b'),
-        leaseId: lease.id,
-        billingPeriod: document.getElementById('bf-period').value,
-        issueDate: todayISO(),
-        dueDate: document.getElementById('bf-due').value,
-        items
-      };
-      state.bills.unshift(bill);
-      const tenant = getTenant(lease.tenantId);
-      notifyUser(tenant?.userId, 'New Bill Published', `Statement for ${bill.billingPeriod} is now available.`, 'bill', 'my-bills');
-      saveState();
-      closeModal();
-      showToast('Bill published and tenant notified.');
-      renderBilling(el);
-    });
-  });
+  return errors.length === 0;
 }
 
-window.viewBillDetail = (billId) => {
-  const bill = state.bills.find(b => b.id === billId);
-  if (!bill) return;
-  const lease = getLease(bill.leaseId);
-  const tenant = getTenant(lease?.tenantId);
-  const unit = getUnit(lease?.unitId);
-  const m = getBillMetrics(bill);
+/** Shake an invalid field: x keyframes, 360ms (skipped for reduced motion). */
+function shake(el) {
+  if (!el || !el.animate || reduceMotion()) return;
+  el.animate([0, -10, 10, -6, 6, -3, 3, 0].map((x) => ({ transform: `translateX(${x}px)` })), { duration: 360, easing: 'ease-out' });
+}
 
-  openModal(`Bill Statement — ${bill.billingPeriod}`, `
-    <div class="stack-md">
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-        <div><strong>${tenant?.fullName || '—'}</strong><br><span class="muted">${unit?.name || ''} • Due ${bill.dueDate}</span></div>
-        <div>${statusBadge(m.status)}</div>
-      </div>
-      <table class="breakdown-table">
-        <thead><tr><th>Charge Description</th><th class="text-right">Amount</th></tr></thead>
-        <tbody>
-          ${bill.items.map(i => `<tr><td>${i.description}</td><td class="text-right font-mono">${peso(i.amount)}</td></tr>`).join('')}
-          <tr class="breakdown-total"><td>Total Amount</td><td class="text-right font-mono">${peso(m.total)}</td></tr>
-          <tr><td>Verified Payments</td><td class="text-right font-mono">${peso(m.paid)}</td></tr>
-          <tr><td><strong>Outstanding Balance</strong></td><td class="text-right font-mono"><strong>${peso(m.balance)}</strong></td></tr>
-        </tbody>
-      </table>
-      <div class="btn-row">
-        <button class="btn btn-primary btn-sm" onclick="window.print()">Print Statement</button>
-        <button class="btn btn-outline btn-sm" onclick="closeModal()">Close</button>
-      </div>
-    </div>
-  `);
-};
+/** Toast slides with transform (never animates left/bottom). */
+function toast(msg, type = '') {
+  const t = $('#toast');
+  t.innerHTML = `${icon(type === 'error' ? 'alert' : 'check', 18, 2.2)}<span>${esc(msg)}</span>`;
+  t.classList.toggle('error', type === 'error');
+  requestAnimationFrame(() => t.classList.remove('is-hidden'));
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.add('is-hidden'), 3600);
+}
 
-function renderPayments(el) {
-  el.innerHTML = `
-    <div class="toolbar">
-      <span class="muted">Partial payments are allocated to bills without overwriting original totals.</span>
-      <button class="btn btn-primary" id="record-pay-btn">+ Record Payment</button>
-    </div>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Date</th><th>Tenant</th><th>Bill Period</th><th>Amount</th><th>Method / Ref</th><th>Status</th><th>Action</th></tr></thead>
-          <tbody>
-            ${state.payments.map(p => {
-              const bill = state.bills.find(b => b.id === p.billId);
-              return `<tr>
-                <td>${p.date}</td>
-                <td><strong>${getTenant(p.tenantId)?.fullName || '—'}</strong></td>
-                <td>${bill?.billingPeriod || '—'}</td>
-                <td class="font-mono">${peso(p.amount)}</td>
-                <td>${p.method}<br><small class="muted">${p.reference}</small></td>
-                <td>${statusBadge(p.status)}</td>
-                <td>
-                  ${p.status === 'Pending Verification' ? `
-                    <div class="btn-row">
-                      <button class="btn btn-primary btn-sm" onclick="verifyPayment('${p.id}','Verified')">Verify</button>
-                      <button class="btn btn-danger btn-sm" onclick="verifyPayment('${p.id}','Rejected')">Reject</button>
-                    </div>
-                  ` : `<span class="muted">—</span>`}
-                </td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
+function openDialog({ title, body, submit = 'Save', form, danger = false, ctx = {} }) {
+  state.dialogCtx = ctx;
+  state.lastFocus = document.activeElement;
+  const root = $('#dialog-root');
+  root.innerHTML = `<dialog class="dialog" aria-labelledby="dlg-title">
+    <form class="dialog-form" data-form="${form}" novalidate>
+      <header><h2 id="dlg-title">${esc(title)}</h2><button type="button" class="icon-btn plain" data-action="close-dialog" aria-label="Close dialog" data-tip="Close">${icon('x', 20)}</button></header>
+      <div class="dialog-body">${body}</div>
+      <footer><button type="button" class="btn btn-outline" data-action="close-dialog">Cancel</button><button type="submit" class="btn ${danger ? 'btn-danger' : 'btn-primary'}">${esc(submit)}</button></footer>
+    </form></dialog>`;
+  const dlg = $('dialog', root);
+  dlg.addEventListener('close', () => { root.innerHTML = ''; state.lastFocus?.focus?.(); });
+  dlg.addEventListener('cancel', (e) => { e.preventDefault(); closeDialog(); });   // Esc animates out too
+  dlg.showModal();
+  ($('input, select, textarea', dlg) || $('[type=submit]', dlg)).focus();
+}
+function closeDialog() {
+  const dlg = $('#dialog-root dialog');
+  if (!dlg || dlg.classList.contains('closing')) return;
+  if (reduceMotion()) return dlg.close();
+  dlg.classList.add('closing');
+  dlg.addEventListener('animationend', (e) => { if (e.target === dlg) dlg.close(); });
+  setTimeout(() => dlg.open && dlg.close(), 260);   // safety net
+}
 
-  document.getElementById('record-pay-btn').addEventListener('click', () => {
-    const openBills = state.bills.filter(b => getBillMetrics(b).balance > 0);
-    openBills.length ? openModal('Record Tenant Payment', `
-      <form id="pay-form" class="form-grid">
-        <div class="form-group full"><label>Target Bill <span class="req">*</span></label>
-          <select id="py-bill" required>${openBills.map(b => {
-            const l = getLease(b.leaseId);
-            const m = getBillMetrics(b);
-            return `<option value="${b.id}">${getTenant(l?.tenantId)?.fullName} — ${b.billingPeriod} (Bal: ${peso(m.balance)})</option>`;
-          }).join('')}</select>
+const confirmDialog = (title, message, submit, form, ctx, danger = false) =>
+  openDialog({ title, body: `<p>${message}</p>`, submit, form, ctx, danger });
+
+/** Monthly collections: bars = collected, dashed line = billed. Accessible table fallback. */
+function collectionsChart(series) {
+  const W = 620, T = 18, B = 186, L = 56, R = 10;
+  const max = Math.max(1, ...series.map((s) => Math.max(s.billed, s.collected)));
+  const pow = 10 ** Math.floor(Math.log10(max));
+  const top = Math.ceil(max / pow) * pow;
+  const y = (v) => B - (v / top) * (B - T);
+  const step = (W - L - R) / series.length;
+  const bw = Math.min(46, step * 0.52);
+  const cx = (i) => L + step * i + step / 2;
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => `<line x1="${L}" x2="${W - R}" y1="${y(top * f)}" y2="${y(top * f)}" class="${f ? 'ch-grid' : 'ch-axis'}"/><text x="${L - 8}" y="${y(top * f) + 4}" text-anchor="end" font-size="11" class="ch-label">${pesoShort(top * f)}</text>`).join('');
+  const bars = series.map((s, i) => `<rect x="${cx(i) - bw / 2}" y="${y(s.collected)}" width="${bw}" height="${Math.max(0, B - y(s.collected))}" rx="4" class="ch-bar${s.period === CURRENT_PERIOD ? ' current' : ''}" style="animation-delay:${i * 60}ms"><title>${s.label}: collected ${peso(s.collected)} of ${peso(s.billed)}</title></rect>`).join('');
+  const line = `<polyline points="${series.map((s, i) => `${cx(i)},${y(s.billed)}`).join(' ')}" fill="none" class="ch-line" stroke-width="2" stroke-dasharray="5 4"/>`;
+  const labels = series.map((s, i) => `<text x="${cx(i)}" y="${B + 20}" text-anchor="middle" font-size="12" class="ch-label">${s.label}${s.period === CURRENT_PERIOD ? '*' : ''}</text>`).join('');
+  const summary = series.map((s) => `${s.label} ${Math.round((s.collected / (s.billed || 1)) * 100)}%`).join(' · ');
+  return `<div class="chart"><svg viewBox="0 0 ${W} 214" role="img" aria-label="Monthly collected versus billed amounts. Collection rate: ${summary}">${grid}${bars}${line}${labels}</svg></div>
+    <p class="small muted" style="margin-top:8px">Collection rate: ${summary}. *Current month is still open.</p>
+    <table class="sr-only"><caption>Monthly collections</caption><thead><tr><th>Month</th><th>Billed</th><th>Collected</th></tr></thead><tbody>${series.map((s) => `<tr><td>${s.label}</td><td>${peso(s.billed)}</td><td>${peso(s.collected)}</td></tr>`).join('')}</tbody></table>`;
+}
+
+/* ---------------------------------------------------------
+   6. Views
+   Each view returns { title, crumbs?, actions?, html } (or a Promise of it).
+   --------------------------------------------------------- */
+const state = { user: null, shell: false, authMode: 'signin', dialogCtx: {}, lastFocus: null, path: '', navCollapsed: false };
+try { state.navCollapsed = localStorage.getItem('rms-nav') === '1'; } catch (e) { /* ignore */ }
+try { const saved = sessionStorage.getItem('rms-user'); if (saved) state.user = db.users.find((u) => u.id === saved) || null; } catch (e) { /* storage unavailable */ }
+
+const home = (u = state.user) => (u ? (u.role === 'tenant' ? '/tenant/dashboard' : '/admin/dashboard') : '/login');
+
+/* ---------- Auth (card layout + rental scene) ---------- */
+const BUILDING_SVG = (() => {
+  // 3 × 5 windows; each lights up on its own rhythm (occupancy "coming alive")
+  const wins = [];
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) {
+    const d = ((r * 3 + c) * 0.37 + (c * 1.3)) % 4.8;
+    wins.push(`<rect class="win" x="${30 + c * 36}" y="${62 + r * 30}" width="22" height="18" rx="3" style="animation-delay:${d.toFixed(2)}s"/>`);
+  }
+  return `<svg viewBox="0 0 170 240" class="building-svg" aria-hidden="true">
+    <rect class="b-shadow" x="10" y="226" width="150" height="10" rx="5"/>
+    <path class="b-roof" d="M14 54 L85 14 L156 54 Z"/>
+    <rect class="b-body" x="20" y="52" width="130" height="178" rx="6"/>
+    ${wins.join('')}
+    <rect class="b-door" x="70" y="200" width="30" height="30" rx="4"/>
+    <circle class="b-knob" cx="94" cy="216" r="1.8"/>
+    <g class="b-sign"><line x1="150" y1="118" x2="164" y2="118" class="b-bracket"/><line x1="160" y1="118" x2="160" y2="126" class="b-bracket"/>
+      <g class="b-sign-board"><rect x="143" y="126" width="34" height="18" rx="3"/><text x="160" y="138.5" text-anchor="middle">RENT</text></g></g>
+  </svg>`;
+})();
+
+const MASCOT_SVG = `<svg viewBox="0 0 96 96" class="mascot-svg" aria-hidden="true">
+  <ellipse class="m-shadow" cx="48" cy="90" rx="26" ry="4"/>
+  <g class="m-body-g">
+    <path class="m-roof" d="M12 44 L48 12 L84 44" />
+    <rect class="m-chimney" x="64" y="18" width="9" height="16" rx="2"/>
+    <rect class="m-body" x="20" y="38" width="56" height="46" rx="12"/>
+    <g class="m-eyes">
+      <g class="m-eye" transform="translate(37 56)"><circle r="7.5" class="m-white"/><circle r="3.6" class="m-pupil"/></g>
+      <g class="m-eye" transform="translate(59 56)"><circle r="7.5" class="m-white"/><circle r="3.6" class="m-pupil"/></g>
+    </g>
+    <g class="m-happy"><path d="M31 57 q6 -7 12 0" /><path d="M53 57 q6 -7 12 0" /></g>
+    <circle class="m-blush" cx="28" cy="67" r="3.5"/><circle class="m-blush" cx="68" cy="67" r="3.5"/>
+    <path class="m-mouth" d="M42 70 q6 5 12 0"/>
+    <path class="m-frown" d="M42 73 q6 -5 12 0"/>
+  </g>
+</svg>`;
+
+function viewLogin() {
+  const signup = state.authMode === 'signup';
+  return `<div class="auth2">
+  <div class="auth-frame">
+    <section class="auth-art">
+      <div class="scene" aria-hidden="true">
+        <div class="layer building" style="--depth:10">${BUILDING_SVG}</div>
+        <div class="layer fc fc-main" style="--depth:22"><div class="fc-in" style="--i:0">
+          <div class="fc-head"><span class="fc-ic">${icon('receipt', 15, 2)}</span><span>Rent collected</span><span class="fc-period">This month</span></div>
+          <div class="fc-big"><span data-count="16100" data-prefix="₱">₱0</span><span class="fc-up">${icon('arrow', 12, 2.4)}12.4%</span></div>
+          <svg class="spark" viewBox="0 0 220 64"><defs><linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2FD3A0" stop-opacity=".35"/><stop offset="1" stop-color="#2FD3A0" stop-opacity="0"/></linearGradient></defs>
+            <path class="spark-area" d="M0 52 C20 50 30 44 45 46 S70 36 85 38 S110 30 125 32 S150 18 165 22 S195 8 220 6 L220 64 L0 64 Z" fill="url(#sparkFill)"/>
+            <path class="spark-line" pathLength="1" d="M0 52 C20 50 30 44 45 46 S70 36 85 38 S110 30 125 32 S150 18 165 22 S195 8 220 6"/>
+            <circle class="spark-dot" cx="220" cy="6" r="4"/></svg>
+        </div></div>
+        <div class="layer fc fc-pay" style="--depth:34"><div class="fc-in" style="--i:1">
+          <span class="fc-av">${icon('check', 16, 2.6)}</span><div class="fc-txt"><b>Payment verified</b><small>Unit 104 · just now</small></div><b class="fc-amt">₱2,650</b>
+        </div></div>
+        <div class="layer fc fc-ring" style="--depth:28"><div class="fc-in" style="--i:2">
+          <svg viewBox="0 0 44 44" class="ring"><circle class="ring-track" cx="22" cy="22" r="17"/><circle class="ring-val" cx="22" cy="22" r="17" pathLength="100"/></svg>
+          <div class="fc-txt"><b data-count="92" data-suffix="%">0%</b><small>Occupancy</small></div>
+        </div></div>
+        <div class="layer fc fc-chip" style="--depth:40"><div class="fc-in" style="--i:3">
+          <span class="fc-chip-ic">${icon('key', 14, 2.2)}</span>Lease renewed · Loft 5
+        </div></div>
+      </div>
+      <div class="art-copy">
+        <span class="eyebrow">With Rentwise you can</span>
+        <h2>Effortlessly manage your rentals, tenants and payments in one place.</h2>
+      </div>
+    </section>
+
+    <section class="auth-panel">
+      <div class="auth-card">
+        <img class="auth-logo logo-on-light" src="${BRAND.logo}" alt="${esc(BRAND.name)}" width="448" height="96">
+        <img class="auth-logo logo-on-dark" src="${BRAND.logoLight}" alt="${esc(BRAND.name)}" width="448" height="96">
+        <div class="auth-head">
+          <div class="mascot" id="mascot">${MASCOT_SVG}</div>
+          <div class="auth-viewport"><div class="auth-track ${signup ? 'signup' : ''}">
+            <div class="auth-pane" id="pane-signin" role="tabpanel" aria-labelledby="tab-signin" ${signup ? 'inert' : ''}><h1>Welcome back</h1><p class="muted">Sign in to your portal.</p></div>
+            <div class="auth-pane" id="pane-signup" role="tabpanel" aria-labelledby="tab-signup" ${signup ? '' : 'inert'}><h1>Create account</h1><p class="muted">Use the Gmail your office has on file.</p></div>
+          </div></div>
         </div>
-        <div class="form-group"><label>Amount (₱) <span class="req">*</span></label><input type="number" id="py-amt" min="1" required /></div>
-        <div class="form-group"><label>Payment Date <span class="req">*</span></label><input type="date" id="py-date" value="${todayISO()}" required /></div>
-        <div class="form-group"><label>Method</label><select id="py-method"><option>GCash</option><option>Bank Transfer</option><option>Cash</option></select></div>
-        <div class="form-group"><label>Reference No.</label><input id="py-ref" placeholder="e.g., GC-102938" /></div>
-        <div class="form-group full btn-row"><button type="submit" class="btn btn-primary">Save & Verify Payment</button><button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button></div>
-      </form>
-    `) : showToast('All bills are already fully paid.');
-
-    const form = document.getElementById('pay-form');
-    if (form) {
-      form.addEventListener('submit', e => {
-        e.preventDefault();
-        const bill = state.bills.find(b => b.id === document.getElementById('py-bill').value);
-        const lease = getLease(bill.leaseId);
-        state.payments.unshift({
-          id: uid('pay'),
-          tenantId: lease.tenantId,
-          billId: bill.id,
-          amount: Number(document.getElementById('py-amt').value),
-          date: document.getElementById('py-date').value,
-          method: document.getElementById('py-method').value,
-          reference: document.getElementById('py-ref').value.trim() || 'CASH',
-          status: 'Verified',
-          notes: 'Recorded by manager'
-        });
-        saveState();
-        closeModal();
-        showToast('Payment recorded and allocated.');
-        renderPayments(el);
-      });
-    }
-  });
-}
-
-window.verifyPayment = (payId, status) => {
-  const pay = state.payments.find(p => p.id === payId);
-  if (!pay) return;
-  pay.status = status;
-  const tenant = getTenant(pay.tenantId);
-  notifyUser(tenant?.userId, `Payment ${status}`, `Your payment of ${peso(pay.amount)} (${pay.reference}) was ${status.toLowerCase()}.`, 'payment', 'my-payments');
-  saveState();
-  showToast(`Payment marked as ${status}.`);
-  navigate('payments');
-};
-
-function renderAdminConcerns(el) {
-  el.innerHTML = `
-    <div class="toolbar">
-      <select id="concern-status-filter">
-        <option value="">All Statuses</option>
-        <option>Pending</option><option>Acknowledged</option><option>In Progress</option><option>Resolved</option><option>Closed</option>
-      </select>
-    </div>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Title</th><th>Tenant / Unit</th><th>Category</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>
-          <tbody id="concern-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  `;
-
-  const renderRows = (status = '') => {
-    const list = state.concerns.filter(c => !status || c.status === status);
-    document.getElementById('concern-tbody').innerHTML = list.map(c => `
-      <tr>
-        <td><strong>${c.title}</strong></td>
-        <td>${getTenant(c.tenantId)?.fullName || '—'}<br><small class="muted">${getUnit(c.unitId)?.name || ''}</small></td>
-        <td>${c.category}</td>
-        <td>${c.createdAt}</td>
-        <td>${statusBadge(c.status)}</td>
-        <td><button class="btn btn-outline btn-sm" onclick="openConcernThread('${c.id}')">Open Thread</button></td>
-      </tr>
-    `).join('') || `<tr><td colspan="6" class="empty-state">No concerns found.</td></tr>`;
-  };
-  renderRows();
-  document.getElementById('concern-status-filter').addEventListener('change', e => renderRows(e.target.value));
-}
-
-window.openConcernThread = (concernId) => {
-  const c = state.concerns.find(x => x.id === concernId);
-  if (!c) return;
-  const isAdmin = currentUser.role === 'admin';
-
-  openModal(c.title, `
-    <div class="stack-md">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-        <span class="muted">${c.category} • Reported ${c.createdAt}</span>
-        ${statusBadge(c.status)}
-      </div>
-      <p>${c.description}</p>
-      ${isAdmin ? `
-        <div class="form-group">
-          <label>Update Status</label>
-          <select id="ct-status">
-            ${['Pending','Acknowledged','In Progress','Resolved','Closed'].map(s => `<option ${c.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+        <div class="tabs ${signup ? 'signup' : ''}" role="tablist" aria-label="Account">
+          <button role="tab" id="tab-signin" aria-controls="pane-signin" aria-selected="${!signup}" data-action="auth-mode" data-mode="signin">Sign in</button>
+          <button role="tab" id="tab-signup" aria-controls="pane-signup" aria-selected="${signup}" data-action="auth-mode" data-mode="signup">Create account</button>
+        </div>
+        <div id="auth-msg" role="alert"></div>
+        <div class="auth-actions">
+          <button class="google-btn" data-action="google-signin">${GOOGLE_G}<span id="google-label">${signup ? 'Sign up with Google' : 'Continue with Google'}</span></button>
+          <p class="auth-note">${icon('lock', 13, 2)}Verified Gmail accounts only</p>
+        </div>
+        <div class="demo-row">
+          <label for="demo-scenario"><span class="demo-dot" aria-hidden="true"></span>Demo</label>
+          <select id="demo-scenario" aria-describedby="demo-hint">
+            <option value="manager">Manager · Maria Santos</option>
+            <option value="tenant">Tenant · Carlo Dizon</option>
+            <option value="pending">Not linked yet</option>
+            <option value="domain">Non-Gmail address</option>
+            <option value="error">Google error</option>
           </select>
+          <span id="demo-hint" class="sr-only">Demo mode: choose what the simulated Google sign-in returns.</span>
         </div>
-      ` : ''}
-      <div class="thread-list">
-        ${c.messages.map(m => `
-          <div class="thread-msg ${m.senderRole}">
-            <div class="thread-meta"><strong>${m.senderName}</strong> • ${m.sentAt}</div>
-            <div>${m.text}</div>
-          </div>
-        `).join('')}
       </div>
-      <form id="reply-form" class="stack-sm">
-        <textarea id="ct-reply" rows="2" placeholder="Write a reply..." required></textarea>
-        <div class="btn-row">
-          <button type="submit" class="btn btn-primary btn-sm">Send Reply</button>
-          <button type="button" class="btn btn-outline btn-sm" onclick="closeModal()">Close</button>
-        </div>
-      </form>
-    </div>
-  `);
+    </section>
+  </div></div>`;
+}
 
-  if (isAdmin) {
-    document.getElementById('ct-status').addEventListener('change', e => {
-      c.status = e.target.value;
-      const tenant = getTenant(c.tenantId);
-      notifyUser(tenant?.userId, 'Concern Status Updated', `"${c.title}" is now ${c.status}.`, 'concern', 'my-concerns');
-      saveState();
-      showToast(`Concern status updated to ${c.status}.`);
-      renderSidebar();
-      navigate(currentRoute);
-      openConcernThread(concernId);
-    });
-  }
-
-  document.getElementById('reply-form').addEventListener('submit', e => {
-    e.preventDefault();
-    const text = document.getElementById('ct-reply').value.trim();
-    if (!text) return;
-    c.messages.push({
-      senderRole: isAdmin ? 'manager' : 'tenant',
-      senderName: currentUser.name,
-      text,
-      sentAt: new Date().toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-    });
-    if (isAdmin) {
-      const tenant = getTenant(c.tenantId);
-      notifyUser(tenant?.userId, 'Manager Replied to Concern', `${currentUser.name} replied on "${c.title}".`, 'concern', 'my-concerns');
-    } else {
-      notifyUser('u1', 'Tenant Replied to Concern', `${currentUser.name} replied on "${c.title}".`, 'concern', 'concerns');
+/* Sign-in page motion: count-ups, parallax depth, mascot eyes. */
+function initAuthArt() {
+  $$('.auth-art [data-count]').forEach((el, i) => {
+    const target = +el.dataset.count, pre = el.dataset.prefix || '', suf = el.dataset.suffix || '';
+    const fmt = (v) => pre + Math.round(v).toLocaleString('en-PH') + suf;
+    if (reduceMotion()) { el.textContent = fmt(target); return; }
+    const start = performance.now() + 450 + i * 150, dur = 1400;
+    const tick = (now) => {
+      const t = Math.min(1, Math.max(0, (now - start) / dur));
+      el.textContent = fmt(target * (1 - Math.pow(1 - t, 3)));
+      if (t < 1 && document.body.contains(el)) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+const authPointer = { raf: 0, x: 0, y: 0 };
+document.addEventListener('pointermove', (e) => {
+  if (!$('.auth2') || reduceMotion()) return;
+  authPointer.x = e.clientX; authPointer.y = e.clientY;
+  if (authPointer.raf) return;
+  authPointer.raf = requestAnimationFrame(() => {
+    authPointer.raf = 0;
+    const art = $('.auth-art');
+    if (art) {
+      const r = art.getBoundingClientRect();
+      const mx = Math.max(-1, Math.min(1, ((authPointer.x - r.left) / r.width) * 2 - 1));
+      const my = Math.max(-1, Math.min(1, ((authPointer.y - r.top) / r.height) * 2 - 1));
+      art.style.setProperty('--mx', mx.toFixed(3));
+      art.style.setProperty('--my', my.toFixed(3));
     }
-    saveState();
-    openConcernThread(concernId);
-  });
-};
-
-function renderAnnouncements(el) {
-  const isAdmin = currentUser.role === 'admin';
-  let list = state.announcements;
-  if (!isAdmin) {
-    const lease = state.leases.find(l => l.tenantId === currentUser.tenantId && ['Active', 'Expiring Soon'].includes(l.status));
-    const unit = lease ? getUnit(lease.unitId) : null;
-    list = state.announcements.filter(a => a.audienceType === 'all' || a.targetPropertyId === unit?.propertyId || a.targetTenantId === currentUser.tenantId);
-  }
-
-  el.innerHTML = `
-    ${isAdmin ? `<div class="toolbar"><span class="muted">Published announcements notify target tenants automatically.</span><button class="btn btn-primary" id="add-ann-btn">+ New Announcement</button></div>` : ''}
-    <div class="stack-md">
-      ${list.map(a => `
-        <div class="announcement-card">
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-            <strong style="font-size:15px;color:var(--dark-accent);">${a.title}</strong>
-            <div class="btn-row">${statusBadge(a.priority)} <span class="badge badge-gray">${a.category}</span></div>
-          </div>
-          <p>${a.description}</p>
-          <div class="announcement-meta">
-            <span>Published: ${a.publishDate}</span>
-            <span>•</span>
-            <span>Audience: ${a.audienceType === 'all' ? 'All Tenants' : getProperty(a.targetPropertyId)?.name || 'Selected Property'}</span>
-          </div>
-        </div>
-      `).join('') || `<div class="card empty-state">No announcements to display.</div>`}
-    </div>
-  `;
-
-  if (isAdmin) {
-    document.getElementById('add-ann-btn').addEventListener('click', () => {
-      openModal('Publish Announcement', `
-        <form id="ann-form" class="form-grid">
-          <div class="form-group full"><label>Title <span class="req">*</span></label><input id="af-title" required /></div>
-          <div class="form-group"><label>Category</label><select id="af-cat"><option>General Update</option><option>Maintenance</option><option>Electricity</option><option>Payment Reminder</option><option>Emergency</option></select></div>
-          <div class="form-group"><label>Priority</label><select id="af-pri"><option>Normal</option><option>High</option></select></div>
-          <div class="form-group full"><label>Target Audience</label>
-            <select id="af-aud">
-              <option value="all">All Tenants</option>
-              ${state.properties.map(p => `<option value="prop:${p.id}">Property: ${p.name}</option>`).join('')}
-            </select>
-          </div>
-          <div class="form-group full"><label>Message <span class="req">*</span></label><textarea id="af-desc" rows="3" required></textarea></div>
-          <div class="form-group full btn-row"><button type="submit" class="btn btn-primary">Publish</button><button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button></div>
-        </form>
-      `);
-      document.getElementById('ann-form').addEventListener('submit', e => {
-        e.preventDefault();
-        const aud = document.getElementById('af-aud').value;
-        const ann = {
-          id: uid('a'),
-          title: document.getElementById('af-title').value.trim(),
-          category: document.getElementById('af-cat').value,
-          priority: document.getElementById('af-pri').value,
-          description: document.getElementById('af-desc').value.trim(),
-          publishDate: todayISO(),
-          audienceType: aud === 'all' ? 'all' : 'property',
-          targetPropertyId: aud.startsWith('prop:') ? aud.split(':')[1] : null,
-          targetTenantId: null
-        };
-        state.announcements.unshift(ann);
-        state.users.filter(u => u.role === 'tenant').forEach(u => {
-          notifyUser(u.id, 'New Announcement', ann.title, 'announcement', 'announcements');
-        });
-        saveState();
-        closeModal();
-        showToast('Announcement published.');
-        renderAnnouncements(el);
-      });
+    $$('#mascot .m-eye').forEach((eye) => {
+      const r = eye.getBoundingClientRect();
+      const dx = authPointer.x - (r.left + r.width / 2), dy = authPointer.y - (r.top + r.height / 2);
+      const d = Math.hypot(dx, dy) || 1, k = Math.min(1, d / 160) * 3;
+      eye.querySelector('.m-pupil').setAttribute('transform', `translate(${((dx / d) * k).toFixed(2)} ${((dy / d) * k).toFixed(2)})`);
     });
-  }
-}
-
-function renderNotificationsPage(el) {
-  const list = state.notifications.filter(n => n.userId === currentUser.id);
-  el.innerHTML = `
-    <div class="toolbar">
-      <span class="muted">${list.filter(n => !n.isRead).length} unread notification(s)</span>
-      <button class="btn btn-outline btn-sm" id="page-mark-read">Mark all as read</button>
-    </div>
-    <div class="card">
-      ${list.map(n => `
-        <div class="notif-item ${n.isRead ? '' : 'unread'}" onclick="openNotification('${n.id}')">
-          <div style="display:flex;justify-content:space-between;">
-            <strong>${n.title}</strong>
-            <small class="muted">${n.createdAt}</small>
-          </div>
-          <span class="muted">${n.message}</span>
-        </div>
-      `).join('') || `<div class="empty-state">No notifications yet.</div>`}
-    </div>
-  `;
-  document.getElementById('page-mark-read').addEventListener('click', () => {
-    state.notifications.filter(n => n.userId === currentUser.id).forEach(n => n.isRead = true);
-    saveState();
-    renderNotificationBell();
-    renderSidebar();
-    renderNotificationsPage(el);
-  });
-}
-
-window.openNotification = (nid) => {
-  const n = state.notifications.find(x => x.id === nid);
-  if (n) {
-    n.isRead = true;
-    saveState();
-    renderNotificationBell();
-    renderSidebar();
-    navigate(n.targetRoute);
-  }
-};
-
-function renderReports(el) {
-  const verifiedTotal = state.payments.filter(p => p.status === 'Verified').reduce((s, p) => s + Number(p.amount), 0);
-  const outstandingTotal = state.bills.reduce((s, b) => s + getBillMetrics(b).balance, 0);
-
-  el.innerHTML = `
-    <div class="toolbar">
-      <span class="muted">Summary derived from live billing, payment, and occupancy records.</span>
-      <button class="btn btn-primary btn-sm" id="export-csv-btn">Export Billing CSV</button>
-    </div>
-    <div class="kpi-grid">
-      <div class="kpi-card"><div class="kpi-label">Verified Collections</div><div class="kpi-value">${peso(verifiedTotal)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Outstanding Receivables</div><div class="kpi-value">${peso(outstandingTotal)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Occupancy Rate</div><div class="kpi-value">${Math.round((state.units.filter(u => u.status === 'Occupied').length / state.units.length) * 100)}%</div></div>
-    </div>
-    <div class="card">
-      <div class="card-header"><h3 class="card-title">Property Occupancy Summary</h3></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Property</th><th>Total Units</th><th>Occupied</th><th>Available</th><th>Maintenance</th></tr></thead>
-          <tbody>
-            ${state.properties.map(p => {
-              const u = state.units.filter(x => x.propertyId === p.id);
-              return `<tr>
-                <td><strong>${p.name}</strong></td>
-                <td>${u.length}</td>
-                <td>${u.filter(x => x.status === 'Occupied').length}</td>
-                <td>${u.filter(x => x.status === 'Available').length}</td>
-                <td>${u.filter(x => x.status === 'Under Maintenance').length}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('export-csv-btn').addEventListener('click', () => {
-    const rows = [['Bill ID', 'Tenant', 'Period', 'Due Date', 'Total', 'Paid', 'Balance', 'Status']];
-    state.bills.forEach(b => {
-      const m = getBillMetrics(b);
-      const l = getLease(b.leaseId);
-      rows.push([b.id, getTenant(l?.tenantId)?.fullName || '', b.billingPeriod, b.dueDate, m.total, m.paid, m.balance, m.status]);
-    });
-    const csv = rows.map(r => r.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'rentflow-billing-report.csv';
-    a.click();
-    showToast('CSV report exported.');
-  });
-}
-
-function renderSettings(el) {
-  el.innerHTML = `
-    <div class="card">
-      <div class="card-header"><h3 class="card-title">Account & Application Settings</h3></div>
-      <div class="card-body stack-md">
-        <div><strong>Signed in as:</strong> ${currentUser.name} (${currentUser.email})</div>
-        <div><strong>Currency:</strong> Philippine Peso (₱)</div>
-        <div><strong>Authentication Policy:</strong> Gmail-only (@gmail.com)</div>
-        <div style="padding-top:10px;border-top:1px solid var(--border);">
-          <button class="btn btn-danger btn-sm" id="reset-demo-btn">Reset Demo Data</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.getElementById('reset-demo-btn').addEventListener('click', () => {
-    if (!confirm('Reset all demo data to initial defaults?')) return;
-    localStorage.removeItem(STORAGE_KEY);
-    state = structuredClone(INITIAL_DATA);
-    showToast('Demo data reset.');
-    navigate('dashboard');
-  });
-}
-
-/* ==========================================================================
-   TENANT PORTAL VIEWS
-   ========================================================================== */
-function getMyLease() {
-  return state.leases.find(l => l.tenantId === currentUser.tenantId && ['Active', 'Expiring Soon'].includes(l.status));
-}
-
-function renderTenantDashboard(el) {
-  const lease = getMyLease();
-  const unit = lease ? getUnit(lease.unitId) : null;
-  const prop = unit ? getProperty(unit.propertyId) : null;
-  const myBills = state.bills.filter(b => b.leaseId === lease?.id).map(b => ({ bill: b, ...getBillMetrics(b) }));
-  const totalBalance = myBills.reduce((s, b) => s + b.balance, 0);
-  const nextDue = myBills.find(b => b.balance > 0)?.bill.dueDate || 'None';
-  const myOpenConcerns = state.concerns.filter(c => c.tenantId === currentUser.tenantId && !['Resolved', 'Closed'].includes(c.status));
-  const latestAnn = state.announcements[0];
-
-  el.innerHTML = `
-    <div class="kpi-grid">
-      <div class="kpi-card"><div class="kpi-label">Current Unit</div><div class="kpi-value">${unit?.name || '—'}</div><div class="kpi-sub">${prop?.name || ''}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Agreed Monthly Rent</div><div class="kpi-value">${peso(lease?.agreedRent || 0)}</div><div class="kpi-sub">${lease ? statusBadge(lease.status) : ''}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Current Balance</div><div class="kpi-value">${peso(totalBalance)}</div><div class="kpi-sub">Next due: ${nextDue}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Open Concerns</div><div class="kpi-value">${myOpenConcerns.length}</div><div class="kpi-sub"><button class="link-btn" onclick="navigate('raise-concern')">+ Raise a concern</button></div></div>
-    </div>
-
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-header"><h3 class="card-title">Latest Announcement</h3><button class="link-btn" onclick="navigate('announcements')">All announcements</button></div>
-        <div class="card-body">
-          ${latestAnn ? `<strong>${latestAnn.title}</strong><p class="muted" style="margin-top:6px;">${latestAnn.description}</p>` : '<p class="muted">No announcements.</p>'}
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header"><h3 class="card-title">Recent Bills</h3><button class="link-btn" onclick="navigate('my-bills')">View all</button></div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Period</th><th>Due Date</th><th>Balance</th><th>Status</th></tr></thead>
-            <tbody>
-              ${myBills.map(b => `<tr>
-                <td>${b.bill.billingPeriod}</td>
-                <td>${b.bill.dueDate}</td>
-                <td class="font-mono">${peso(b.balance)}</td>
-                <td>${statusBadge(b.status)}</td>
-              </tr>`).join('') || `<tr><td colspan="4" class="empty-state">No bills yet.</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderTenantContract(el) {
-  const lease = getMyLease();
-  if (!lease) {
-    el.innerHTML = `<div class="card empty-state">No active contract found.</div>`;
-    return;
-  }
-  const unit = getUnit(lease.unitId);
-  const prop = getProperty(unit?.propertyId);
-
-  el.innerHTML = `
-    <div class="card">
-      <div class="card-header"><h3 class="card-title">Active Lease Agreement</h3>${statusBadge(lease.status)}</div>
-      <div class="card-body form-grid">
-        <div><span class="muted">Property</span><br><strong>${prop?.name}</strong></div>
-        <div><span class="muted">Unit</span><br><strong>${unit?.name} (${unit?.type})</strong></div>
-        <div><span class="muted">Start Date</span><br><strong>${lease.startDate}</strong></div>
-        <div><span class="muted">End Date</span><br><strong>${lease.endDate} (${lease.durationMonths} months)</strong></div>
-        <div><span class="muted">Agreed Monthly Rent</span><br><strong>${peso(lease.agreedRent)}</strong></div>
-        <div><span class="muted">Security Deposit</span><br><strong>${peso(lease.deposit)}</strong></div>
-        <div class="full"><span class="muted">Notes</span><br><p>${lease.notes || '—'}</p></div>
-      </div>
-    </div>
-  `;
-}
-
-function renderTenantBills(el) {
-  const lease = getMyLease();
-  const myBills = state.bills.filter(b => b.leaseId === lease?.id).map(b => ({ bill: b, ...getBillMetrics(b) }));
-  el.innerHTML = `
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Billing Period</th><th>Due Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Action</th></tr></thead>
-          <tbody>
-            ${myBills.map(b => `<tr>
-              <td><strong>${b.bill.billingPeriod}</strong></td>
-              <td>${b.bill.dueDate}</td>
-              <td class="font-mono">${peso(b.total)}</td>
-              <td class="font-mono">${peso(b.paid)}</td>
-              <td class="font-mono"><strong>${peso(b.balance)}</strong></td>
-              <td>${statusBadge(b.status)}</td>
-              <td><button class="btn btn-outline btn-sm" onclick="viewBillDetail('${b.bill.id}')">Breakdown</button></td>
-            </tr>`).join('') || `<tr><td colspan="7" class="empty-state">No bills available.</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-}
-
-function renderTenantPayments(el) {
-  const myPays = state.payments.filter(p => p.tenantId === currentUser.tenantId);
-  const lease = getMyLease();
-  const openBills = state.bills.filter(b => b.leaseId === lease?.id && getBillMetrics(b).balance > 0);
-
-  el.innerHTML = `
-    <div class="toolbar">
-      <span class="muted">Submit payment proof for manager verification.</span>
-      <button class="btn btn-primary" id="submit-pay-btn">+ Submit Payment</button>
-    </div>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Date</th><th>Bill Period</th><th>Amount</th><th>Method</th><th>Reference</th><th>Status</th></tr></thead>
-          <tbody>
-            ${myPays.map(p => `<tr>
-              <td>${p.date}</td>
-              <td>${state.bills.find(b => b.id === p.billId)?.billingPeriod || '—'}</td>
-              <td class="font-mono">${peso(p.amount)}</td>
-              <td>${p.method}</td>
-              <td>${p.reference}</td>
-              <td>${statusBadge(p.status)}</td>
-            </tr>`).join('') || `<tr><td colspan="6" class="empty-state">No payment history yet.</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('submit-pay-btn').addEventListener('click', () => {
-    if (!openBills.length) return showToast('You have no unpaid bills.');
-    openModal('Submit Payment Record', `
-      <form id="tpay-form" class="form-grid">
-        <div class="form-group full"><label>Select Bill <span class="req">*</span></label>
-          <select id="tp-bill">${openBills.map(b => `<option value="${b.id}">${b.billingPeriod} (Balance: ${peso(getBillMetrics(b).balance)})</option>`).join('')}</select>
-        </div>
-        <div class="form-group"><label>Amount Paid (₱) <span class="req">*</span></label><input type="number" id="tp-amt" min="1" required /></div>
-        <div class="form-group"><label>Payment Method</label><select id="tp-method"><option>GCash</option><option>Bank Transfer</option><option>Cash</option></select></div>
-        <div class="form-group full"><label>Reference Number <span class="req">*</span></label><input id="tp-ref" required placeholder="e.g., GC-998877" /></div>
-        <div class="form-group full btn-row"><button type="submit" class="btn btn-primary">Submit for Verification</button><button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button></div>
-      </form>
-    `);
-    document.getElementById('tpay-form').addEventListener('submit', e => {
-      e.preventDefault();
-      const amount = Number(document.getElementById('tp-amt').value);
-      state.payments.unshift({
-        id: uid('pay'),
-        tenantId: currentUser.tenantId,
-        billId: document.getElementById('tp-bill').value,
-        amount,
-        date: todayISO(),
-        method: document.getElementById('tp-method').value,
-        reference: document.getElementById('tp-ref').value.trim(),
-        status: 'Pending Verification',
-        notes: 'Submitted by tenant'
-      });
-      notifyUser('u1', 'Payment Pending Verification', `${currentUser.name} submitted ${peso(amount)} for verification.`, 'payment', 'payments');
-      saveState();
-      closeModal();
-      showToast('Payment submitted for manager verification.');
-      renderTenantPayments(el);
-    });
-  });
-}
-
-function renderRaiseConcern(el) {
-  const lease = getMyLease();
-  const unit = lease ? getUnit(lease.unitId) : null;
-  el.innerHTML = `
-    <div class="card" style="max-width:680px;">
-      <div class="card-header"><h3 class="card-title">Submit a Maintenance Request or Concern</h3></div>
-      <div class="card-body">
-        <form id="raise-concern-form" class="stack-md">
-          <div class="form-group"><label>Category <span class="req">*</span></label>
-            <select id="rc-cat">
-              <option>Water</option><option>Electricity</option><option>Internet</option><option>Plumbing</option>
-              <option>Room/Unit Maintenance</option><option>Security</option><option>Noise</option><option>Facility</option><option>Other</option>
-            </select>
-          </div>
-          <div class="form-group"><label>Title <span class="req">*</span></label><input id="rc-title" placeholder="Brief summary of the issue" required /></div>
-          <div class="form-group"><label>Description <span class="req">*</span></label><textarea id="rc-desc" rows="4" placeholder="Describe the concern in detail..." required></textarea></div>
-          <div class="form-group"><label>Optional Photo Attachment</label><input type="file" id="rc-file" accept="image/*" /></div>
-          <div><button type="submit" class="btn btn-primary">Submit Concern</button></div>
-        </form>
-      </div>
-    </div>
-  `;
-  document.getElementById('raise-concern-form').addEventListener('submit', e => {
-    e.preventDefault();
-    const title = document.getElementById('rc-title').value.trim();
-    const desc = document.getElementById('rc-desc').value.trim();
-    const file = document.getElementById('rc-file').files[0]?.name || '';
-    state.concerns.unshift({
-      id: uid('c'),
-      tenantId: currentUser.tenantId,
-      propertyId: unit?.propertyId || 'p1',
-      unitId: unit?.id || 'un1',
-      category: document.getElementById('rc-cat').value,
-      title,
-      description: desc,
-      attachment: file,
-      status: 'Pending',
-      assignedTo: 'Unassigned',
-      createdAt: todayISO(),
-      messages: [{ senderRole: 'tenant', senderName: currentUser.name, text: desc, sentAt: todayISO() }]
-    });
-    notifyUser('u1', 'New Tenant Concern', `${currentUser.name} submitted "${title}".`, 'concern', 'concerns');
-    saveState();
-    showToast('Concern submitted!');
-    navigate('my-concerns');
-  });
-}
-
-function renderTenantConcerns(el) {
-  const list = state.concerns.filter(c => c.tenantId === currentUser.tenantId);
-  el.innerHTML = `
-    <div class="toolbar">
-      <span class="muted">Track your submitted concerns and manager replies.</span>
-      <button class="btn btn-primary btn-sm" onclick="navigate('raise-concern')">+ Raise a Concern</button>
-    </div>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Title</th><th>Category</th><th>Submitted</th><th>Status</th><th>Action</th></tr></thead>
-          <tbody>
-            ${list.map(c => `<tr>
-              <td><strong>${c.title}</strong></td>
-              <td>${c.category}</td>
-              <td>${c.createdAt}</td>
-              <td>${statusBadge(c.status)}</td>
-              <td><button class="btn btn-outline btn-sm" onclick="openConcernThread('${c.id}')">View Thread (${c.messages.length})</button></td>
-            </tr>`).join('') || `<tr><td colspan="5" class="empty-state">You have not raised any concerns yet.</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-}
-
-function renderTenantProfile(el) {
-  const t = getTenant(currentUser.tenantId);
-  el.innerHTML = `
-    <div class="card" style="max-width:640px;">
-      <div class="card-header"><h3 class="card-title">My Profile</h3></div>
-      <div class="card-body form-grid">
-        <div><span class="muted">Full Name</span><br><strong>${t?.fullName || currentUser.name}</strong></div>
-        <div><span class="muted">Linked Google Account</span><br><strong>${currentUser.email}</strong></div>
-        <div><span class="muted">Contact Number</span><br><strong>${t?.contact || '—'}</strong></div>
-        <div><span class="muted">Emergency Contact</span><br><strong>${t?.emergencyContact || '—'}</strong></div>
-        <div class="full"><span class="muted">Home Address</span><br><strong>${t?.address || '—'}</strong></div>
-      </div>
-    </div>
-  `;
-}
-
-/* ---------- Mobile Drawer & Global Listeners ---------- */
-function closeMobileSidebar() {
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('mobile-backdrop').classList.add('hidden');
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  initAuth();
-
-  document.getElementById('logout-btn').addEventListener('click', logout);
-  document.getElementById('modal-close-btn').addEventListener('click', closeModal);
-  document.getElementById('modal-overlay').addEventListener('click', e => {
-    if (e.target.id === 'modal-overlay') closeModal();
-  });
-  document.addEventListener('keydown', e => {
-    const overlay = document.getElementById('modal-overlay');
-    if (overlay.classList.contains('hidden')) return;
-
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      closeModal();
-      return;
-    }
-
-    if (e.key === 'Tab') {
-      const focusable = overlay.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-  });
-
-  document.getElementById('open-sidebar-btn').addEventListener('click', () => {
-    document.getElementById('sidebar').classList.add('open');
-    document.getElementById('mobile-backdrop').classList.remove('hidden');
-  });
-  document.getElementById('close-sidebar-btn').addEventListener('click', closeMobileSidebar);
-  document.getElementById('mobile-backdrop').addEventListener('click', closeMobileSidebar);
-
-  document.getElementById('notif-bell-btn').addEventListener('click', (e) => {
-    e.stopPropagation();
-    document.getElementById('notif-dropdown').classList.toggle('hidden');
-  });
-  document.addEventListener('click', () => document.getElementById('notif-dropdown').classList.add('hidden'));
-  document.getElementById('notif-dropdown').addEventListener('click', e => e.stopPropagation());
-
-  document.getElementById('mark-all-read-btn').addEventListener('click', () => {
-    state.notifications.filter(n => n.userId === currentUser.id).forEach(n => n.isRead = true);
-    saveState();
-    renderNotificationBell();
-    renderSidebar();
-  });
-  document.getElementById('view-all-notifs-btn').addEventListener('click', () => {
-    document.getElementById('notif-dropdown').classList.add('hidden');
-    navigate('notifications');
   });
 });
+function mascotMood(mood) {
+  const m = $('#mascot');
+  if (!m) return;
+  m.classList.remove('is-happy', 'is-error', 'is-thinking');
+  void m.offsetWidth;                          // restart the mood animation
+  if (mood) m.classList.add('is-' + mood);
+}
+
+function viewAccessPending() {
+  return `<div class="auth-panel" style="min-height:100vh;background:var(--bg)">
+    <div class="card card-pad auth-card" style="width:min(480px,100%)">
+      <div class="state-icon" style="width:52px;height:52px;border-radius:14px;background:var(--amber-bg);color:var(--amber-fg);display:grid;place-items:center">${icon('lock', 26)}</div>
+      <h1>Your account is waiting for access</h1>
+      <p class="muted">We verified <strong>new.tenant@gmail.com</strong>, but it isn’t linked to a tenant or staff record yet.</p>
+      <ul class="muted" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px">
+        <li>Tenants: ask your property office for an invitation or registration code.</li>
+        <li>Staff: an administrator must invite this address.</li>
+      </ul>
+      <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-primary" data-action="logout">Back to sign in</button><a class="btn btn-outline" href="mailto:office@example.com">Contact the office</a></div>
+    </div></div>`;
+}
+
+/* ---------- Admin / Manager ---------- */
+async function adminDashboard() {
+  const d = await services.dashboard();
+  const k = d.kpi;
+  const pct = (n) => (k.bills ? ((n / k.bills) * 100).toFixed(1) + '%' : '0%');
+  const dist = [['Paid', k.paid, 'var(--green)'], ['Partially Paid', k.partial, 'var(--amber)'], ['Unpaid', k.unpaid, 'var(--gray)'], ['Overdue', k.overdue, 'var(--red)']];
+  const rate = k.billed ? Math.round((k.collected / k.billed) * 100) : 0;
+  return {
+    title: 'Dashboard',
+    crumbs: [['Overview · ' + monthLabel(CURRENT_PERIOD)]],
+    actions: `<a class="btn btn-primary" href="#/admin/billing">${icon('plus', 18, 2)}<span class="btn-label">Generate bills</span></a>`,
+    html: `<div class="content">
+      <section class="grid grid-stats" aria-label="Key figures">
+        <div class="card card-dark hero-stat row-span-2">
+          <h2>Collections · ${monthLabel(CURRENT_PERIOD)}</h2>
+          <div class="big">${peso(k.collected)}</div>
+          <div class="small muted num">of ${peso(k.billed)} billed · ${rate}% collected</div>
+          <div class="progress" role="img" aria-label="${rate}% of billed amount collected"><span style="width:${rate}%"></span></div>
+          <div class="kv kv-top"><span class="muted">Outstanding (all bills)</span><span class="strong num">${peso(k.outstanding)}</span></div>
+          <div class="kv"><span class="muted">Awaiting verification</span><a href="#/admin/payments" class="strong on-hero">${k.pendingCount} payments</a></div>
+        </div>
+        ${statCard('Properties', k.properties, 'Assigned to you')}
+        ${statCard('Total units', k.units, `${k.maintenance} under maintenance`)}
+        ${statCard('Occupied units', k.occupied, `${Math.round((k.occupied / k.units) * 100)}% occupancy`)}
+        ${statCard('Available units', k.available, 'Ready to lease')}
+        ${statCard('Active tenants', k.tenants, `${k.unlinked} without linked account`)}
+        ${statCard('Paid bills', k.paid, `of ${k.bills} this month`, 'green')}
+        ${statCard('Unpaid bills', k.unpaid, `+${k.partial} partially paid`)}
+        ${statCard('Overdue bills', k.overdue, `${peso(k.overdueAmount)} past due`, k.overdue ? 'red' : '')}
+      </section>
+
+      <section class="grid grid-2">
+        <div class="card card-pad span-2">
+          <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline;margin-bottom:12px"><h2>Monthly collections</h2>
+            <div class="legend"><span><i class="swatch bar"></i>Collected</span><span><i class="swatch cur"></i>Current month</span><span><i class="dash"></i>Billed</span></div></div>
+          ${collectionsChart(d.series)}
+        </div>
+        <div class="card card-pad" style="display:flex;flex-direction:column;gap:14px">
+          <h2>Bill status · ${monthShort(CURRENT_PERIOD)}</h2>
+          <div class="small muted num">${k.bills} bills issued</div>
+          <div class="stack-bar" role="img" aria-label="${dist.map((x) => `${x[0]} ${x[1]}`).join(', ')}">${dist.map((x) => `<span style="width:${pct(x[1])};background:${x[2]}"></span>`).join('')}</div>
+          ${dist.map((x) => `<div class="dist-row"><i class="swatch" style="background:${x[2]}"></i><span class="name">${badge(x[0])}</span><span class="strong num">${x[1]}</span><span class="pct">${pct(x[1])}</span></div>`).join('')}
+          <a class="card-link" href="#/admin/reports" style="margin-top:auto">Open billing report →</a>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Recent payments</h2><a class="card-link" href="#/admin/payments">View all payments</a></div>
+        ${paymentsTable(d.recentPayments, { compact: true })}
+      </section>
+
+      <section class="grid grid-3">
+        <div class="card card-pad"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><h2>Overdue &amp; due soon</h2><a class="card-link" href="#/admin/billing">View all</a></div>
+          <ul class="list">${d.dueBills.map(({ b, c }) => `<li><a class="list-row" href="#/admin/billing/${b.id}"><div class="body"><div class="t">${esc(tenantOfBill(b).name)} · ${esc(unitLabel(leaseOfBill(b).unitId))}</div><div class="s">${peso(c.balance)} balance · due ${fmtShort(b.due)}</div></div>${badge(c.status)}</a></li>`).join('') || '<li class="muted small">Nothing outstanding.</li>'}</ul></div>
+        <div class="card card-pad"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><h2>Contracts expiring soon</h2><a class="card-link" href="#/admin/contracts">View all</a></div>
+          <ul class="list">${d.expiring.map((l) => `<li><a class="list-row" href="#/admin/contracts"><div class="body"><div class="t">${esc(byId('tenants', l.tenantId).name)} · ${esc(unitLabel(l.unitId))}</div><div class="s">Ends ${fmtShort(l.end)} · ${remaining(l)}</div></div>${badge(leaseStatus(l))}</a></li>`).join('') || '<li class="muted small">No contracts ending in the next 45 days.</li>'}</ul></div>
+        <div class="card card-pad"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><h2>Newest concerns</h2><a class="card-link" href="#/admin/concerns">View all</a></div>
+          <ul class="list">${d.concerns.map((c) => `<li><a class="list-row" href="#/admin/concerns/${c.id}"><div class="body"><div class="t">${esc(c.title)}</div><div class="s">${esc(c.category)} · ${esc(unitLabel(c.unitId))} · ${fmtShort(c.created)}</div></div>${badge(c.status)}</a></li>`).join('')}</ul></div>
+      </section>
+    </div>`
+  };
+}
+
+function paymentsTable(list, { compact = false } = {}) {
+  const cols = [
+    { label: 'Tenant', cell: (p) => `<span class="t-strong">${esc(byId('tenants', p.tenantId).name)}</span>`, sortValue: (p) => byId('tenants', p.tenantId).name },
+    { label: 'Bill', cell: (p) => db.allocations.filter((a) => a.paymentId === p.id).map((a) => `<a href="#/admin/billing/${a.billId}">${esc(a.billId)}</a>`).join('<br>') || '<span class="t-muted">Unallocated</span>' },
+    { label: 'Method · Ref', cell: (p) => `<span class="t-muted">${esc(p.method)} · ${esc(p.ref)}</span>` },
+    { label: 'Date', cell: (p) => `<span class="num t-muted">${fmtShort(p.date)}</span>`, sortValue: (p) => p.date },
+    { label: 'Amount', num: true, cell: (p) => `<span class="t-strong">${peso(p.amount)}</span>`, sortValue: (p) => p.amount },
+    { label: 'Status', cell: (p) => badge(p.status) + (p.reason ? `<div class="small muted" style="margin-top:4px">${esc(p.reason)}</div>` : '') }
+  ];
+  if (!compact) cols.push({ label: 'Actions', num: true, cell: (p) => p.status === 'Pending Verification'
+    ? `<div class="actions"><button class="btn btn-danger-outline btn-sm" data-action="reject-payment" data-id="${p.id}">Reject</button><button class="btn btn-primary btn-sm" data-action="verify-payment" data-id="${p.id}">Verify</button></div>`
+    : `<span class="small muted">${p.reviewedBy ? 'by ' + esc(p.reviewedBy) : ''}</span>` });
+  return dataTable({ cols, rows: list, minWidth: compact ? 720 : 900,
+    rowAttrs: (p) => `data-row data-search="${esc((byId('tenants', p.tenantId).name + ' ' + p.ref + ' ' + p.method).toLowerCase())}" data-f-status="${esc(p.status)}"`,
+    empty: ['No payments yet', 'Recorded and submitted payments will appear here.', '', 'card'] });
+}
+
+async function adminProperties() {
+  const props = await services.properties();
+  return {
+    title: 'Properties',
+    actions: `<button class="btn btn-primary" data-action="todo" data-what="Create property">${icon('plus', 18, 2)}<span class="btn-label">Add property</span></button>`,
+    html: `<div class="content"><div class="grid grid-3">${props.map((p) => {
+      const units = db.units.filter((u) => u.propertyId === p.id);
+      const occ = units.filter((u) => u.status === 'Occupied').length;
+      const rate = units.length ? Math.round((occ / units.length) * 100) : 0;
+      return `<article class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;gap:12px;align-items:center"><div style="width:40px;height:40px;border-radius:10px;background:var(--chip);color:var(--chip-fg);display:grid;place-items:center;flex:none">${icon('building', 20)}</div><div><h2>${esc(p.name)}</h2><div class="small muted">${esc(p.address)}</div></div></div>
+        <p class="small muted">${esc(p.description)}</p>
+        <div><div style="display:flex;justify-content:space-between" class="small"><span>Occupancy</span><span class="strong num">${occ}/${units.length} · ${rate}%</span></div>
+          <div class="progress light" style="margin-top:6px" role="img" aria-label="${rate}% occupied"><span style="width:${rate}%"></span></div></div>
+        <ul class="list">${units.map((u) => `<li class="list-row"><div class="body"><div class="t">Unit ${esc(u.name)}</div><div class="s">${esc(u.type)} · ${peso(u.rent)}/mo</div></div>${badge(u.status)}</li>`).join('')}</ul>
+      </article>`;
+    }).join('')}</div></div>`
+  };
+}
+
+async function adminUnits() {
+  const units = await services.units();
+  return {
+    title: 'Units / Spaces',
+    actions: `<button class="btn btn-primary" data-action="todo" data-what="Add unit">${icon('plus', 18, 2)}<span class="btn-label">Add unit</span></button>`,
+    html: `<div class="content"><section class="card" data-filterable>
+      <div class="toolbar">${searchBox('Search unit or type')}${filterSelect('property', 'Property', db.properties.map((p) => [p.id, p.name]))}${filterSelect('status', 'Status', ['Available', 'Occupied', 'Under Maintenance'])}</div>
+      ${dataTable({ cols: [
+        { label: 'Unit', cell: (u) => `<span class="t-strong">${esc(u.name)}</span>`, sortValue: (u) => u.name },
+        { label: 'Property', cell: (u) => esc(byId('properties', u.propertyId).name), sortValue: (u) => byId('properties', u.propertyId).name },
+        { label: 'Type', cell: (u) => `<span class="t-muted">${esc(u.type)}</span>` },
+        { label: 'Monthly rent', num: true, cell: (u) => peso(u.rent), sortValue: (u) => u.rent },
+        { label: 'Current tenant', cell: (u) => { const l = db.leases.find((x) => x.unitId === u.id && ['Active', 'Expiring Soon'].includes(leaseStatus(x))); return l ? esc(byId('tenants', l.tenantId).name) : '<span class="t-muted">—</span>'; } },
+        { label: 'Status', cell: (u) => badge(u.status) }
+      ], rows: units, rowAttrs: (u) => `data-row data-search="${esc((u.name + ' ' + u.type).toLowerCase())}" data-f-property="${u.propertyId}" data-f-status="${esc(u.status)}"` })}
+    </section></div>`
+  };
+}
+
+async function adminTenants() {
+  const tenants = await services.tenants();
+  return {
+    title: 'Tenants',
+    actions: `<button class="btn btn-primary" data-action="todo" data-what="Create tenant">${icon('plus', 18, 2)}<span class="btn-label">Add tenant</span></button>`,
+    html: `<div class="content"><section class="card" data-filterable>
+      <div class="toolbar">${searchBox('Search name, email or phone')}${filterSelect('account', 'Account', [['linked', 'Linked'], ['unlinked', 'Not linked']])}</div>
+      ${dataTable({ cols: [
+        { label: 'Tenant', cell: (t) => `<div style="display:flex;gap:10px;align-items:center"><span class="avatar">${initials(t.name)}</span><span class="t-strong">${esc(t.name)}</span></div>`, sortValue: (t) => t.name },
+        { label: 'Contact', cell: (t) => `<div class="small">${esc(t.phone)}</div><div class="small t-muted">${esc(t.email)}</div>` },
+        { label: 'Current unit', cell: (t) => { const l = activeLeaseOfTenant(t.id); return l ? esc(unitLabel(l.unitId)) : '<span class="t-muted">—</span>'; } },
+        { label: 'Balance', num: true, cell: (t) => { const bal = db.bills.filter((b) => tenantOfBill(b).id === t.id).reduce((s, b) => s + billCalc(b).balance, 0); return bal ? `<span class="t-strong">${peso(bal)}</span>` : '<span class="t-muted">₱0.00</span>'; }, sortValue: (t) => db.bills.filter((b) => tenantOfBill(b).id === t.id).reduce((s, b) => s + billCalc(b).balance, 0) },
+        { label: 'Google account', cell: (t) => t.userId ? badge('Active') : `<button class="btn btn-ghost btn-sm" data-action="todo" data-what="Send invitation to ${esc(t.email)}">Send invite</button>` }
+      ], rows: tenants, rowAttrs: (t) => `data-row data-search="${esc((t.name + ' ' + t.email + ' ' + t.phone).toLowerCase())}" data-f-account="${t.userId ? 'linked' : 'unlinked'}"` })}
+    </section></div>`
+  };
+}
+
+async function adminContracts() {
+  const leases = await services.leases();
+  return {
+    title: 'Contracts',
+    actions: `<button class="btn btn-primary" data-action="todo" data-what="Create contract">${icon('plus', 18, 2)}<span class="btn-label">New contract</span></button>`,
+    html: `<div class="content"><section class="card" data-filterable>
+      <div class="toolbar">${searchBox('Search tenant or unit')}${filterSelect('status', 'Status', ['Pending', 'Active', 'Expiring Soon', 'Expired', 'Terminated'])}</div>
+      ${dataTable({ cols: [
+        { label: 'Lease', cell: (l) => `<span class="t-strong">${esc(l.id)}</span>` },
+        { label: 'Tenant', cell: (l) => esc(byId('tenants', l.tenantId).name), sortValue: (l) => byId('tenants', l.tenantId).name },
+        { label: 'Unit', cell: (l) => `<span class="t-muted">${esc(unitLabel(l.unitId))}</span>` },
+        { label: 'Term', cell: (l) => `<span class="num small">${fmtDate(l.start)} – ${fmtDate(l.end)}</span><div class="small t-muted">${l.months} months · ${remaining(l)}</div>`, sortValue: (l) => l.end },
+        { label: 'Rent', num: true, cell: (l) => peso(l.rent), sortValue: (l) => l.rent },
+        { label: 'Deposit', num: true, cell: (l) => `<span class="t-muted">${peso(l.deposit)}</span>` },
+        { label: 'Status', cell: (l) => badge(leaseStatus(l)) },
+        { label: 'Actions', num: true, cell: (l) => `<div class="actions"><button class="btn btn-outline btn-sm" data-action="todo" data-what="Renew ${l.id} (creates a new lease record)">Renew</button></div>` }
+      ], rows: [...leases].sort((a, b) => a.end.localeCompare(b.end)), minWidth: 980, rowAttrs: (l) => `data-row data-search="${esc((byId('tenants', l.tenantId).name + ' ' + unitLabel(l.unitId) + ' ' + l.id).toLowerCase())}" data-f-status="${esc(leaseStatus(l))}"` })}
+      <div class="card-foot">Renewals create a new lease record; the old agreement stays in history. Overlapping active leases on one unit are blocked.</div>
+    </section></div>`
+  };
+}
+
+async function adminBilling() {
+  const bills = (await services.bills()).map((b) => ({ b, c: billCalc(b) })).sort((x, y) => y.b.period.localeCompare(x.b.period) || x.b.due.localeCompare(y.b.due));
+  return {
+    title: 'Billing',
+    actions: `<button class="btn btn-primary" data-action="todo" data-what="Generate December bills from active leases">${icon('plus', 18, 2)}<span class="btn-label">Generate bills</span></button>`,
+    html: `<div class="content"><section class="card" data-filterable>
+      <div class="toolbar">${searchBox('Search bill no. or tenant')}${filterSelect('period', 'Period', [...new Set(bills.map((x) => x.b.period))].map((p) => [p, monthLabel(p)]))}${filterSelect('status', 'Status', ['Paid', 'Partially Paid', 'Unpaid', 'Overdue'])}</div>
+      ${dataTable({ cols: [
+        { label: 'Bill', cell: ({ b }) => `<a class="row-link" href="#/admin/billing/${b.id}">${esc(b.id)}</a>` },
+        { label: 'Tenant · Unit', cell: ({ b }) => `<div class="t-strong">${esc(tenantOfBill(b).name)}</div><div class="small t-muted">${esc(unitLabel(leaseOfBill(b).unitId))}</div>`, sortValue: ({ b }) => tenantOfBill(b).name },
+        { label: 'Period', cell: ({ b }) => esc(monthLabel(b.period)), sortValue: ({ b }) => b.period },
+        { label: 'Due', cell: ({ b }) => `<span class="num">${fmtShort(b.due)}</span>`, sortValue: ({ b }) => b.due },
+        { label: 'Total', num: true, cell: ({ c }) => peso(c.total), sortValue: ({ c }) => c.total },
+        { label: 'Paid', num: true, cell: ({ c }) => `<span class="t-muted">${peso(c.paid)}</span>`, sortValue: ({ c }) => c.paid },
+        { label: 'Balance', num: true, cell: ({ c }) => `<span class="t-strong">${peso(c.balance)}</span>`, sortValue: ({ c }) => c.balance },
+        { label: 'Status', cell: ({ c }) => badge(c.status) }
+      ], rows: bills, minWidth: 960, rowAttrs: ({ b, c }) => `data-row data-search="${esc((b.id + ' ' + tenantOfBill(b).name).toLowerCase())}" data-f-period="${b.period}" data-f-status="${esc(c.status)}"` })}
+    </section></div>`
+  };
+}
+
+async function adminBillDetail({ id }) {
+  const b = await services.bill(id);
+  if (!b) return notFound('Bill not found', '/admin/billing');
+  return billDetail(b, true);
+}
+
+/** Shared bill detail. Managers can edit items, record/verify payments; tenants read only. */
+function billDetail(b, manage) {
+  const c = billCalc(b);
+  const lease = leaseOfBill(b);
+  const tenant = tenantOfBill(b);
+  const days = daysBetween(TODAY, toDate(b.due));
+  const dueNote = c.balance <= 0 ? 'Fully paid. Thank you!'
+    : c.status === 'Overdue' ? `Overdue by ${-days} day${-days === 1 ? '' : 's'}.`
+    : days === 0 ? 'Due today.' : `Due in ${days} day${days === 1 ? '' : 's'}. Turns Overdue after ${fmtShort(b.due)} if a balance remains.`;
+  const base = manage ? '/admin/billing' : '/tenant/bills';
+  const itemCols = [
+    { label: 'Description', cell: (i) => `<span class="t-strong">${esc(i.desc)}</span>` },
+    { label: 'Category', cell: (i) => `<span class="tag ${i.type === 'Penalty' ? 'red' : ''}">${esc(i.type)}</span>` },
+    { label: 'Period / notes', cell: (i) => `<span class="t-muted">${esc(i.note) || '—'}</span>` },
+    { label: 'Amount', num: true, cell: (i) => peso(i.amount) }
+  ];
+  if (manage) itemCols.push({ label: 'Remove', num: true, cell: (i) => c.status === 'Paid' ? '' : `<button class="icon-btn plain" style="margin-left:auto" data-action="remove-item" data-bill="${b.id}" data-item="${i.id}" aria-label="Remove ${esc(i.desc)}" data-tip="Remove line item">${icon('trash', 18)}</button>` });
+
+  const payRows = c.allocs.length ? c.allocs.map(({ payment: p, amount }) => {
+    const tone = TONES[p.status][0];
+    return `<div class="pay-row ${p.status === 'Pending Verification' ? 'pending' : ''}">
+      <div class="ico badge ${tone}" style="padding:0">${icon(TONES[p.status][1], 20, 2)}</div>
+      <div class="body"><div class="strong">${esc(p.method)} · ${esc(p.ref)}</div><div class="small muted num">Paid ${fmtDate(p.date)}${p.reviewedBy ? ` · reviewed by ${esc(p.reviewedBy)}` : ''}${p.proof ? ` · proof: ${esc(p.proof)}` : ''}${p.reason ? ` · ${esc(p.reason)}` : ''}</div></div>
+      <div class="amt">${peso(amount)}</div>${badge(p.status)}
+      ${manage && p.status === 'Pending Verification' ? `<div class="decide"><span class="note">Verifying moves this bill to <strong>${c.balance - amount <= 0 ? 'Paid' : 'Partially Paid'}</strong> (balance ${peso(Math.max(0, c.balance - amount))}).</span>
+        <button class="btn btn-danger-outline btn-sm" data-action="reject-payment" data-id="${p.id}">Reject…</button><button class="btn btn-primary btn-sm" data-action="verify-payment" data-id="${p.id}">Verify &amp; allocate</button></div>` : ''}
+    </div>`;
+  }).join('') : emptyState('No payments yet', manage ? 'Record a payment when the tenant pays.' : 'Payments you make toward this bill will show here.', '', 'card');
+
+  return {
+    title: `Bill ${b.id}`,
+    crumbs: manage ? [['Billing', '#/admin/billing'], [b.id]] : [['My Bills', '#/tenant/bills'], [b.id]],
+    actions: `<button class="btn btn-outline no-print" data-action="print">${icon('print')}<span class="btn-label">Print statement</span></button>
+      <button class="btn btn-outline no-print" data-action="todo" data-what="PDF download (needs backend PDF service)">${icon('download')}<span class="btn-label">Download PDF</span></button>
+      ${manage && c.balance > 0 ? `<button class="btn btn-primary no-print" data-action="record-payment" data-id="${b.id}">${icon('plus', 18, 2)}<span class="btn-label">Record payment</span></button>` : ''}`,
+    html: `<div class="content"><div class="split">
+      <div class="primary">
+        <section class="card" aria-labelledby="items-h">
+          <div class="card-head"><div><h2 id="items-h">Charges ${badge(c.status)}</h2><div class="sub">Billing period ${monthLabel(b.period)}</div></div>
+            ${manage && c.status !== 'Paid' ? `<button class="btn btn-dashed btn-sm no-print" data-action="add-item" data-id="${b.id}">${icon('plus', 16, 2)}Add line item</button>` : ''}</div>
+          ${dataTable({ cols: itemCols, rows: b.items, minWidth: 560, empty: ['No charges', 'Add rent and utilities as line items.'] })}
+          <div class="totals">
+            <div class="line"><span class="muted">Total amount</span><span class="strong">${peso(c.total)}</span></div>
+            <div class="line"><span class="muted">Amount paid (verified)</span><span class="strong" style="color:var(--green-fg)">− ${peso(c.paid)}</span></div>
+            ${c.pending ? `<div class="line"><span class="muted">Awaiting verification</span><span style="color:var(--amber-fg)">${peso(c.pending)}</span></div>` : ''}
+            <div class="line grand"><span>Outstanding balance</span><span>${peso(c.balance)}</span></div>
+          </div>
+          ${manage ? '<div class="card-foot">Penalties are never added automatically. Add a late fee as its own line item, and only where the lease allows it.</div>' : ''}
+        </section>
+        <section class="card" aria-labelledby="pay-h">
+          <div class="card-head"><h2 id="pay-h">Payments allocated to this bill</h2></div>
+          ${payRows}
+        </section>
+      </div>
+      <aside class="aside">
+        <section class="card card-pad" style="display:flex;flex-direction:column;gap:12px" aria-labelledby="bd-h">
+          <h2 id="bd-h">Bill details</h2>
+          <div style="display:flex;gap:12px;align-items:center"><span class="avatar lg">${initials(tenant.name)}</span><div><div class="strong">${esc(tenant.name)}</div><div class="small muted">${esc(unitLabel(lease.unitId))}</div></div></div>
+          <dl class="dl">
+            <dt>Lease</dt><dd>${esc(lease.id)} · ${esc(leaseStatus(lease))}</dd>
+            <dt>Issue date</dt><dd>${fmtDate(b.issue)}</dd>
+            <dt>Due date</dt><dd class="strong">${fmtDate(b.due)}</dd>
+            <dt>Agreed rent</dt><dd>${peso(lease.rent)} / month</dd>
+          </dl>
+          <div class="callout ${c.status === 'Overdue' ? 'danger' : ''}">${dueNote}</div>
+        </section>
+        ${manage ? activityCard(b) : ''}
+      </aside>
+    </div></div>`
+  };
+}
+
+/** Activity log: latest 3 visible, the rest expands with a height:auto transition. */
+function activityCard(b) {
+  const entries = b.log.length ? [...b.log].reverse() : [{ at: b.issue + 'T08:00:00', text: 'Bill generated and published', by: 'System', tone: '' }];
+  const li = (e) => `<li><span class="tdot ${e.tone}"></span><div><div style="font-size:14px">${esc(e.text)}</div><div class="small muted num">${fmtDT(e.at)} · ${esc(e.by)}</div></div></li>`;
+  const more = entries.slice(3);
+  return `<section class="card card-pad" aria-labelledby="act-h"><h2 id="act-h" style="margin-bottom:12px">Activity</h2>
+    <ol class="timeline">${entries.slice(0, 3).map(li).join('')}</ol>
+    ${more.length ? `<div class="collapsible"><button type="button" class="disclosure" data-action="toggle-collapse" aria-expanded="false" aria-controls="act-more">Full history (${more.length} more)${icon('chevron', 16, 2)}</button>
+      <div class="collapse" id="act-more"><div class="collapse-inner"><ol class="timeline">${more.map(li).join('')}</ol></div></div></div>` : ''}
+  </section>`;
+}
+
+async function adminPayments() {
+  const list = [...(await services.payments())].sort((a, b) => (a.status === 'Pending Verification' ? -1 : 0) - (b.status === 'Pending Verification' ? -1 : 0) || b.date.localeCompare(a.date));
+  const pending = list.filter((p) => p.status === 'Pending Verification');
+  return {
+    title: 'Payments',
+    html: `<div class="content">
+      ${pending.length ? `<div class="callout warn" role="status">${pending.length} payment${pending.length > 1 ? 's' : ''} waiting for verification (${peso(pending.reduce((s, p) => s + p.amount, 0))}). Bills update as soon as you verify.</div>` : ''}
+      <section class="card" data-filterable>
+        <div class="toolbar">${searchBox('Search tenant, reference or method')}${filterSelect('status', 'Verification', ['Pending Verification', 'Verified', 'Rejected'])}</div>
+        ${paymentsTable(list)}
+      </section></div>`
+  };
+}
+
+async function adminConcerns() {
+  const list = [...(await services.concerns())].sort((a, b) => b.created.localeCompare(a.created));
+  return {
+    title: 'Concerns',
+    html: `<div class="content"><section class="card" data-filterable>
+      <div class="toolbar">${searchBox('Search concerns')}${filterSelect('property', 'Property', db.properties.map((p) => [p.id, p.name]))}${filterSelect('category', 'Category', CATEGORIES)}${filterSelect('status', 'Status', CONCERN_STATUSES)}</div>
+      ${dataTable({ cols: [
+        { label: 'Concern', cell: (c) => `<a class="row-link" href="#/admin/concerns/${c.id}">${esc(c.title)}</a><div class="small t-muted">${esc(c.id)}</div>` },
+        { label: 'Tenant · Unit', cell: (c) => `<div>${esc(byId('tenants', c.tenantId).name)}</div><div class="small t-muted">${esc(unitLabel(c.unitId))}</div>` },
+        { label: 'Category', cell: (c) => `<span class="tag">${esc(c.category)}</span>` },
+        { label: 'Opened', cell: (c) => `<span class="num small">${fmtDT(c.created)}</span>`, sortValue: (c) => c.created },
+        { label: 'Assigned', cell: (c) => c.assignedTo ? esc(userById(c.assignedTo).name) : '<span class="tag red">Unassigned</span>' },
+        { label: 'Status', cell: (c) => badge(c.status) }
+      ], rows: list, minWidth: 900, rowAttrs: (c) => `data-row data-search="${esc((c.title + ' ' + c.id + ' ' + byId('tenants', c.tenantId).name).toLowerCase())}" data-f-property="${byId('units', c.unitId)?.propertyId || ''}" data-f-category="${esc(c.category)}" data-f-status="${esc(c.status)}"`,
+        empty: ['No concerns', 'Tenant concerns will appear here.', '', 'chat'] })}
+    </section></div>`
+  };
+}
+
+const CATEGORIES = ['Water', 'Electricity', 'Internet', 'Plumbing', 'Room/Unit Maintenance', 'Security', 'Noise', 'Facility', 'Other'];
+const CONCERN_STATUSES = ['Pending', 'Acknowledged', 'In Progress', 'Resolved', 'Closed'];
+
+/** Shared concern detail + thread. */
+async function concernDetail({ id }) {
+  const c = await services.concern(id);
+  const manage = state.user.role === 'manager';
+  if (!c || (!manage && c.tenantId !== state.user.tenantId)) return notFound('Concern not found', manage ? '/admin/concerns' : '/tenant/concerns');
+  const tenant = byId('tenants', c.tenantId);
+  const msgs = db.messages.filter((m) => m.concernId === c.id).sort((a, b) => a.at.localeCompare(b.at));
+  const idx = CONCERN_STATUSES.indexOf(c.status);
+  const thread = msgs.map((m) => {
+    const s = senderOf(m);
+    if (s.role === 'system') return `<div class="sys">${esc(m.text)} · ${fmtShort(m.at)}</div>`;
+    const mine = manage ? s.role === 'manager' : s.role === 'tenant';
+    return `<div class="msg ${mine ? 'me' : 'them'}"><div class="bubble">${esc(m.text)}</div>
+      ${m.attachment ? `<div class="attachment">${icon('image', 22)}Photo: ${esc(m.attachment)}</div>` : ''}
+      <div class="meta num">${mine && !manage ? 'You' : esc(s.name)}${s.role === 'manager' ? ' · Manager' : ''} · ${fmtDT(m.at)}</div></div>`;
+  }).join('');
+  const closed = ['Resolved', 'Closed'].includes(c.status);
+  return {
+    title: c.title,
+    crumbs: manage ? [['Concerns', '#/admin/concerns'], [c.id]] : [['My Concerns', '#/tenant/concerns'], [c.id]],
+    html: `<div class="content"><div class="split">
+      <div class="primary"><section class="card">
+        <div class="card-pad" style="display:flex;flex-direction:column;gap:12px;border-bottom:1px solid var(--line)">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${badge(c.status)}<span class="tag">${esc(c.category)}</span><span class="small muted">${esc(c.id)}</span></div>
+          <ol class="stepper" aria-label="Progress: ${esc(c.status)}, step ${idx + 1} of 5">${CONCERN_STATUSES.map((s, i) => `<li class="${i <= idx ? 'done' : ''} ${i === idx ? 'current' : ''}">${s}</li>`).join('')}</ol>
+        </div>
+        <div class="thread" role="log" aria-label="Messages">${thread}</div>
+        ${c.status === 'Closed' ? '<div class="card-foot">This concern is closed. Raise a new concern if the problem comes back.</div>' : `
+        <form class="composer" data-form="reply" data-id="${c.id}" novalidate>
+          ${field({ id: 'reply', label: manage ? `Reply to ${tenant.name}` : 'Reply to manager', type: 'textarea', attrs: 'rows="3" placeholder="Write a message…"' })}
+          <div class="row">${!manage ? `<button type="button" class="btn btn-outline" data-action="todo" data-what="Photo upload (needs file storage)">${icon('image')}Add photo</button>` : ''}<button class="btn btn-primary" type="submit">Send</button></div>
+        </form>`}
+      </section></div>
+      <aside class="aside">
+        <section class="card card-pad" style="display:flex;flex-direction:column;gap:12px">
+          <h2>Details</h2>
+          <dl class="dl">
+            <dt>Tenant</dt><dd>${esc(tenant.name)}</dd>
+            <dt>Unit</dt><dd>${esc(unitLabel(c.unitId))}</dd>
+            <dt>Opened</dt><dd>${fmtDT(c.created)}</dd>
+            <dt>Assigned to</dt><dd>${c.assignedTo ? esc(userById(c.assignedTo).name) : 'Not yet assigned'}</dd>
+          </dl>
+          ${!manage && !closed ? '<div class="callout">You’ll get a notification when the manager replies or changes the status.</div>' : ''}
+        </section>
+        ${manage ? `<section class="card card-pad"><form class="form" data-form="concern-update" data-id="${c.id}" novalidate>
+          <h2>Manage</h2>
+          ${field({ id: 'c-status', label: 'Status', type: 'select', options: CONCERN_STATUSES, value: c.status })}
+          ${field({ id: 'c-assign', label: 'Assign to', type: 'select', options: [['', 'Unassigned'], ...db.users.filter((u) => u.role === 'manager').map((u) => [u.id, u.name])], value: c.assignedTo || '' })}
+          <button class="btn btn-primary" type="submit">Save changes</button>
+          <p class="help">The tenant is notified when the status changes.</p>
+        </form></section>` : ''}
+      </aside>
+    </div></div>`
+  };
+}
+
+async function adminAnnouncements() {
+  const list = await services.announcements();
+  return {
+    title: 'Announcements',
+    actions: `<button class="btn btn-primary" data-action="new-announcement">${icon('plus', 18, 2)}<span class="btn-label">New announcement</span></button>`,
+    html: `<div class="content"><div class="grid grid-3">${list.map((a) => announcementCard(a, true)).join('') || emptyState('No announcements yet', 'Publish one to notify tenants.', '', 'megaphone')}</div></div>`
+  };
+}
+
+function announcementCard(a, manage) {
+  const live = a.publish <= isoDate(TODAY) && (!a.expiry || a.expiry >= isoDate(TODAY));
+  return `<article class="card announce">
+    <div class="top"><span class="tag ${a.category === 'Emergency' ? 'red' : 'blue'}">${esc(a.category)}</span>${a.priority === 'High' ? `<span class="badge red">${icon('alert', 14, 2.2)}High priority</span>` : ''}${manage ? (live ? badge('Active') : a.publish > isoDate(TODAY) ? badge('Pending') : badge('Expired')) : ''}</div>
+    <h3>${esc(a.title)}</h3>
+    <p>${esc(a.body)}</p>
+    <div class="foot"><span>${fmtDate(a.publish)}${a.expiry ? ' – ' + fmtDate(a.expiry) : ''}</span>${manage ? `<span>Audience: ${esc(audienceLabel(a))}</span>` : '<span>Property office</span>'}</div>
+  </article>`;
+}
+
+async function adminReports() {
+  await wait();
+  const periods = [...new Set(db.bills.map((b) => b.period))].sort().reverse();
+  const rows = periods.map((p) => { const cs = db.bills.filter((b) => b.period === p).map(billCalc); const billed = cs.reduce((s, c) => s + c.total, 0); const paid = cs.reduce((s, c) => s + c.paid, 0); return { p, n: cs.length, billed, paid, bal: billed - paid, rate: billed ? Math.round((paid / billed) * 100) : 0 }; });
+  const statusCounts = ['Paid', 'Partially Paid', 'Unpaid', 'Overdue'].map((s) => [s, db.bills.filter((b) => billCalc(b).status === s).length]);
+  const concernCounts = CONCERN_STATUSES.map((s) => [s, db.concerns.filter((c) => c.status === s).length]);
+  return {
+    title: 'Reports',
+    actions: `<button class="btn btn-outline" data-action="todo" data-what="Excel export (needs backend support)">${icon('download')}<span class="btn-label">Export Excel</span></button><button class="btn btn-outline" data-action="todo" data-what="PDF export (needs backend support)">${icon('download')}<span class="btn-label">Export PDF</span></button>`,
+    html: `<div class="content">
+      <section class="card"><div class="card-head"><h2>Monthly collection report</h2></div>
+        ${dataTable({ cols: [
+          { label: 'Period', cell: (r) => `<span class="t-strong">${monthLabel(r.p)}</span>` },
+          { label: 'Bills', num: true, cell: (r) => r.n },
+          { label: 'Billed', num: true, cell: (r) => peso(r.billed) },
+          { label: 'Collected', num: true, cell: (r) => peso(r.paid) },
+          { label: 'Outstanding', num: true, cell: (r) => `<span class="t-strong">${peso(r.bal)}</span>` },
+          { label: 'Rate', num: true, cell: (r) => r.rate + '%' }
+        ], rows })}</section>
+      <div class="grid grid-3">
+        <section class="card card-pad"><h2 style="margin-bottom:10px">Bills by status (all periods)</h2>${statusCounts.map(([s, n]) => `<div class="dist-row" style="padding:6px 0">${badge(s)}<span class="name"></span><span class="strong num">${n}</span></div>`).join('')}</section>
+        <section class="card card-pad"><h2 style="margin-bottom:10px">Occupancy by property</h2>${db.properties.map((p) => { const u = db.units.filter((x) => x.propertyId === p.id); const o = u.filter((x) => x.status === 'Occupied').length; return `<div style="padding:6px 0"><div class="dist-row"><span class="name">${esc(p.name)}</span><span class="strong num">${o}/${u.length}</span></div><div class="progress light" style="margin-top:6px"><span style="width:${Math.round((o / u.length) * 100)}%"></span></div></div>`; }).join('')}</section>
+        <section class="card card-pad"><h2 style="margin-bottom:10px">Concern status summary</h2>${concernCounts.map(([s, n]) => `<div class="dist-row" style="padding:6px 0">${badge(s)}<span class="name"></span><span class="strong num">${n}</span></div>`).join('')}</section>
+      </div></div>`
+  };
+}
+
+async function notificationsView() {
+  const list = await services.notifications(state.user.id);
+  return {
+    title: 'Notifications',
+    actions: list.some((n) => !n.read) ? `<button class="btn btn-outline" data-action="mark-all-read">${icon('check')}<span class="btn-label">Mark all as read</span></button>` : '',
+    html: `<div class="content"><section class="card">${list.length ? `<ul class="list">${list.map(notifItem).join('')}</ul>` : emptyState('You’re all caught up', 'New bills, payment updates, replies and announcements will show here.', '', 'bell')}</section></div>`
+  };
+}
+const notifItem = (n) => `<li><a class="notif-item ${n.read ? '' : 'unread'}" href="#${n.link}" data-action="open-notif" data-id="${n.id}" data-link="${esc(n.link)}"><span class="dot" aria-hidden="true"></span><div style="flex:1;min-width:0"><div class="t">${esc(n.title)}${n.read ? '' : '<span class="sr-only"> (unread)</span>'}</div><div class="muted">${esc(n.message)}</div><div class="small muted num">${fmtDT(n.at)}</div></div></a></li>`;
+
+async function settingsView() {
+  await wait();
+  const u = state.user;
+  const t = u.tenantId ? byId('tenants', u.tenantId) : null;
+  return {
+    title: u.role === 'tenant' ? 'My Profile' : 'Settings',
+    html: `<div class="content"><div class="grid grid-2">
+      <section class="card card-pad" style="display:flex;flex-direction:column;gap:14px"><h2>Profile</h2>
+        <div style="display:flex;gap:12px;align-items:center"><span class="avatar lg">${initials(u.name)}</span><div><div class="strong">${esc(u.name)}</div><div class="small muted">${esc(u.role === 'tenant' ? 'Tenant' : u.title)}</div></div></div>
+        <dl class="dl"><dt>Google account</dt><dd>${esc(u.email)}</dd>${t ? `<dt>Phone</dt><dd>${esc(t.phone)}</dd><dt>Address</dt><dd>${esc(t.address)}</dd><dt>Emergency contact</dt><dd>${esc(t.emergency || '—')}</dd>` : `<dt>Properties</dt><dd>${u.propertyIds.map((id) => esc(byId('properties', id).name)).join(', ')}</dd>`}</dl>
+        <div class="callout">Your sign-in is managed by Google. ${u.role === 'tenant' ? 'Ask the property office to update your contact details.' : ''}</div>
+      </section>
+      ${u.role === 'manager' ? `<section class="card card-pad" style="display:flex;flex-direction:column;gap:12px"><h2>Team &amp; access</h2><p class="small muted">Staff are invited by an administrator; public sign-up never grants staff access.</p>
+        <ul class="list">${db.users.filter((x) => x.role === 'manager').map((x) => `<li class="list-row"><span class="avatar">${initials(x.name)}</span><div class="body"><div class="t">${esc(x.name)}</div><div class="s">${esc(x.email)} · ${x.propertyIds.length} properties</div></div>${badge('Active')}</li>`).join('')}</ul>
+        <button class="btn btn-outline" data-action="todo" data-what="Invite staff member">${icon('plus')}Invite staff</button></section>` : ''}
+    </div></div>`
+  };
+}
+
+/* ---------- Tenant portal ---------- */
+async function tenantDashboard() {
+  await wait();
+  const tid = state.user.tenantId;
+  const lease = activeLeaseOfTenant(tid);
+  const bills = db.bills.filter((b) => tenantOfBill(b).id === tid).sort((a, b) => b.period.localeCompare(a.period));
+  const current = bills[0];
+  const c = current ? billCalc(current) : null;
+  const ann = db.announcements.filter((a) => announcementTargetsTenant(a, tid) && a.publish <= isoDate(TODAY)).sort((a, b) => b.publish.localeCompare(a.publish))[0];
+  const concerns = db.concerns.filter((x) => x.tenantId === tid).sort((a, b) => b.created.localeCompare(a.created)).slice(0, 3);
+  const payments = db.payments.filter((p) => p.tenantId === tid).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4);
+  const paidPct = c && c.total ? Math.round((c.paid / c.total) * 100) : 0;
+  return {
+    title: `Hi, ${state.user.name.split(' ')[0]}`,
+    crumbs: [[lease ? unitLabel(lease.unitId) : 'No active unit']],
+    actions: `<a class="btn btn-primary" href="#/tenant/raise-concern">${icon('plus', 18, 2)}<span class="btn-label">Raise a concern</span></a>`,
+    html: `<div class="content"><div class="grid grid-2">
+      ${current ? `<section class="card card-dark card-pad span-2" style="display:flex;flex-wrap:wrap;gap:24px" aria-labelledby="bal-h">
+        <div style="flex:1 1 280px;display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><h2 id="bal-h">Current balance · ${monthLabel(current.period)}</h2>${badge(c.status)}</div>
+          <div class="num" style="font-size:38px;font-weight:700;letter-spacing:-.5px">${peso(c.balance)}</div>
+          <div class="small muted num">Due ${fmtDate(current.due)} · ${peso(c.paid)} of ${peso(c.total)} paid</div>
+          <div class="progress" style="max-width:420px" role="img" aria-label="${paidPct}% of this bill paid"><span style="width:${paidPct}%"></span></div>
+          ${c.pending ? `<div class="callout on-hero">${icon('clock', 16, 2)}<span class="num">${peso(c.pending)} sent, waiting for verification</span></div>` : ''}
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px"><a class="btn btn-light" href="#/tenant/bills/${current.id}">View full bill</a><a class="btn btn-on-dark" href="#/tenant/payments">Payment history</a></div>
+        </div>
+        <div class="hero-inner" style="flex:1 1 260px">
+          <div class="strong">This month’s charges</div>
+          ${current.items.map((i) => `<div class="row"><span>${esc(i.desc)}</span><span>${peso(i.amount)}</span></div>`).join('')}
+          <div class="row total"><span>Total</span><span>${peso(c.total)}</span></div>
+        </div>
+      </section>` : `<section class="card span-2">${emptyState('No bills yet', 'Your first bill will appear here once it is published.', '', 'receipt')}</section>`}
+
+      <section class="card card-pad" style="display:flex;flex-direction:column;gap:14px" aria-labelledby="c-h">
+        <div style="display:flex;justify-content:space-between;align-items:center"><h2 id="c-h">My contract</h2>${lease ? badge(leaseStatus(lease)) : ''}</div>
+        ${lease ? `<dl class="dl"><dt>Unit</dt><dd>${esc(unitLabel(lease.unitId))}</dd><dt>Monthly rent</dt><dd class="strong">${peso(lease.rent)}</dd><dt>Start</dt><dd>${fmtDate(lease.start)}</dd><dt>End</dt><dd>${fmtDate(lease.end)}</dd></dl>
+        <div class="callout num">${remaining(lease)}</div><a class="card-link" href="#/tenant/contract">See contract details →</a>` : '<p class="muted">No active contract.</p>'}
+      </section>
+
+      <section class="card card-pad" style="display:flex;flex-direction:column;gap:10px" aria-labelledby="an-h">
+        <div style="display:flex;justify-content:space-between;align-items:center"><h2 id="an-h">Latest announcement</h2>${ann ? `<span class="tag blue">${esc(ann.category)}</span>` : ''}</div>
+        ${ann ? `<h3>${esc(ann.title)}</h3><p class="muted" style="font-size:14px;line-height:1.55">${esc(ann.body)}</p><div class="small muted" style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span>Posted ${fmtDate(ann.publish)}</span><a class="strong" href="#/tenant/announcements">All announcements</a></div>` : '<p class="muted">No announcements right now.</p>'}
+      </section>
+
+      <section class="card card-pad" aria-labelledby="cc-h">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><h2 id="cc-h">My concerns</h2><a class="card-link" href="#/tenant/concerns">View all</a></div>
+        <ul class="list">${concerns.map((x) => `<li><a class="list-row" href="#/tenant/concerns/${x.id}"><div class="body"><div class="t">${esc(x.title)}</div><div class="s">${esc(x.category)} · ${fmtShort(x.created)}</div></div>${badge(x.status)}</a></li>`).join('') || '<li class="muted small">No concerns raised.</li>'}</ul>
+      </section>
+
+      <section class="card" aria-labelledby="p-h">
+        <div class="card-head"><h2 id="p-h">Recent payments</h2><a class="card-link" href="#/tenant/payments">Payment history</a></div>
+        <ul class="list" style="padding:0 20px">${payments.map((p) => `<li class="list-row"><div class="body"><div class="t num">${peso(p.amount)} · ${esc(p.method)}</div><div class="s">${fmtDate(p.date)} · ${esc(p.ref)}</div></div>${badge(p.status)}</li>`).join('')}</ul>
+      </section>
+    </div></div>`
+  };
+}
+
+async function tenantContract() {
+  await wait();
+  const tid = state.user.tenantId;
+  const leases = db.leases.filter((l) => l.tenantId === tid).sort((a, b) => b.start.localeCompare(a.start));
+  const l = leases[0];
+  if (!l) return { title: 'My Contract', html: `<div class="content"><section class="card">${emptyState('No contract yet', 'Your contract will appear here once the office creates it.', '', 'file')}</section></div>` };
+  return {
+    title: 'My Contract',
+    actions: `<button class="btn btn-outline" data-action="todo" data-what="Contract file download (when the office uploads one)">${icon('download')}<span class="btn-label">Download contract</span></button>`,
+    html: `<div class="content"><div class="grid grid-2">
+      <section class="card card-pad" style="display:flex;flex-direction:column;gap:14px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Lease ${esc(l.id)}</h2>${badge(leaseStatus(l))}</div>
+        <dl class="dl"><dt>Property / unit</dt><dd>${esc(unitLabel(l.unitId))}</dd><dt>Start date</dt><dd>${fmtDate(l.start)}</dd><dt>End date</dt><dd>${fmtDate(l.end)}</dd><dt>Duration</dt><dd>${l.months} months</dd><dt>Agreed monthly rent</dt><dd class="strong">${peso(l.rent)}</dd><dt>Security deposit</dt><dd>${peso(l.deposit)}</dd></dl>
+        <div class="callout num">${remaining(l)}</div></section>
+      <section class="card card-pad"><h2 style="margin-bottom:12px">Lease timeline</h2>
+        <div class="progress light" role="img" aria-label="Lease progress"><span style="width:${Math.min(100, Math.max(0, Math.round((daysBetween(toDate(l.start), TODAY) / daysBetween(toDate(l.start), toDate(l.end))) * 100)))}%"></span></div>
+        <div class="small muted num" style="display:flex;justify-content:space-between;margin-top:8px"><span>${fmtShort(l.start)}</span><span>Today</span><span>${fmtShort(l.end)}</span></div>
+        <p class="small muted" style="margin-top:16px">Renewals are made as a new contract by the property office. Message them through a concern if you’d like to renew.</p></section>
+    </div></div>`
+  };
+}
+
+async function tenantBills() {
+  const tid = state.user.tenantId;
+  const bills = (await services.bills()).filter((b) => tenantOfBill(b).id === tid).map((b) => ({ b, c: billCalc(b) })).sort((x, y) => y.b.period.localeCompare(x.b.period));
+  const outstanding = bills.reduce((s, x) => s + x.c.balance, 0);
+  return {
+    title: 'My Bills',
+    html: `<div class="content"><div class="grid grid-stats">${statCard('Outstanding balance', peso(outstanding), outstanding ? 'Across all bills' : 'You’re all paid up', outstanding ? '' : 'green')}${statCard('Bills this year', bills.length, 'Since your lease started')}</div>
+      <section class="card" data-filterable><div class="toolbar">${filterSelect('status', 'Status', ['Paid', 'Partially Paid', 'Unpaid', 'Overdue'])}</div>
+      ${dataTable({ cols: [
+        { label: 'Period', cell: ({ b }) => `<a class="row-link" href="#/tenant/bills/${b.id}">${monthLabel(b.period)}</a>` },
+        { label: 'Due date', cell: ({ b }) => `<span class="num">${fmtDate(b.due)}</span>` },
+        { label: 'Total', num: true, cell: ({ c }) => peso(c.total) },
+        { label: 'Paid', num: true, cell: ({ c }) => `<span class="t-muted">${peso(c.paid)}</span>` },
+        { label: 'Balance', num: true, cell: ({ c }) => `<span class="t-strong">${peso(c.balance)}</span>` },
+        { label: 'Status', cell: ({ c }) => badge(c.status) }
+      ], rows: bills, minWidth: 640, rowAttrs: ({ c }) => `data-row data-search="" data-f-status="${esc(c.status)}"`, empty: ['No bills yet', 'Published bills will appear here.', '', 'receipt'] })}</section></div>`
+  };
+}
+
+async function tenantBillDetail({ id }) {
+  const b = await services.bill(id);
+  if (!b || tenantOfBill(b).id !== state.user.tenantId) return notFound('Bill not found', '/tenant/bills');
+  return billDetail(b, false);
+}
+
+async function tenantPayments() {
+  const list = (await services.payments()).filter((p) => p.tenantId === state.user.tenantId).sort((a, b) => b.date.localeCompare(a.date));
+  return {
+    title: 'My Payments',
+    html: `<div class="content"><div class="callout">Online payment isn’t available yet. Pay through the office, bank transfer or GCash, then the office records and verifies it.</div>
+      <section class="card">${dataTable({ cols: [
+        { label: 'Date', cell: (p) => `<span class="num">${fmtDate(p.date)}</span>` },
+        { label: 'Method · Ref', cell: (p) => `${esc(p.method)} <span class="t-muted">· ${esc(p.ref)}</span>` },
+        { label: 'Applied to', cell: (p) => db.allocations.filter((a) => a.paymentId === p.id).map((a) => `<a href="#/tenant/bills/${a.billId}">${monthLabel(byId('bills', a.billId).period)}</a>`).join(', ') },
+        { label: 'Amount', num: true, cell: (p) => `<span class="t-strong">${peso(p.amount)}</span>` },
+        { label: 'Status', cell: (p) => badge(p.status) + (p.reason ? `<div class="small muted" style="margin-top:4px">${esc(p.reason)}</div>` : '') },
+        { label: 'Receipt', num: true, cell: (p) => p.status === 'Verified' ? `<button class="btn btn-ghost btn-sm" data-action="todo" data-what="Receipt download">Receipt</button>` : '' }
+      ], rows: list, minWidth: 760, empty: ['No payments yet', 'Your payments will show here after the office records them.', '', 'card'] })}</section></div>`
+  };
+}
+
+function tenantRaiseConcern() {
+  const lease = activeLeaseOfTenant(state.user.tenantId);
+  return {
+    title: 'Raise a Concern',
+    html: `<div class="content" style="max-width:760px"><section class="card card-pad">
+      <form class="form" data-form="new-concern" novalidate>
+        <p class="muted">Reporting for <strong>${lease ? esc(unitLabel(lease.unitId)) : 'your unit'}</strong>. Fields marked <span class="req">*</span> are required.</p>
+        ${field({ id: 'n-category', label: 'Category', type: 'select', required: true, options: [['', 'Choose a category'], ...CATEGORIES] })}
+        ${field({ id: 'n-title', label: 'Title', required: true, help: 'A short summary, e.g. “Leaking kitchen faucet”.', attrs: 'maxlength="80" autocomplete="off"' })}
+        ${field({ id: 'n-desc', label: 'Description', type: 'textarea', required: true, help: 'What happened, since when, and where exactly. At least 15 characters.', attrs: 'rows="5"' })}
+        <div class="field"><label for="n-photo">Photo (optional)</label>
+          <div class="file-drop">${icon('image', 22)}<div style="flex:1"><input id="n-photo" name="n-photo" type="file" accept="image/*" aria-describedby="n-photo-help"><p class="help" id="n-photo-help">JPG or PNG up to 5 MB. Demo: the file name is saved, not the file.</p></div></div></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap"><a class="btn btn-outline" href="#/tenant/dashboard">Cancel</a><button class="btn btn-primary" type="submit">Submit concern</button></div>
+      </form></section></div>`
+  };
+}
+
+async function tenantConcerns() {
+  const list = (await services.concerns()).filter((c) => c.tenantId === state.user.tenantId).sort((a, b) => b.created.localeCompare(a.created));
+  return {
+    title: 'My Concerns',
+    actions: `<a class="btn btn-primary" href="#/tenant/raise-concern">${icon('plus', 18, 2)}<span class="btn-label">Raise a concern</span></a>`,
+    html: `<div class="content"><section class="card">${list.length ? `<ul class="list" style="padding:0 20px">${list.map((c) => {
+      const last = db.messages.filter((m) => m.concernId === c.id).sort((a, b) => b.at.localeCompare(a.at))[0];
+      return `<li><a class="list-row" href="#/tenant/concerns/${c.id}" style="padding:14px 0"><div class="body"><div class="t">${esc(c.title)}</div><div class="s">${esc(c.category)} · opened ${fmtShort(c.created)}${last ? ' · last update ' + fmtShort(last.at) : ''}</div></div>${badge(c.status)}</a></li>`;
+    }).join('')}</ul>` : emptyState('No concerns yet', 'Report a problem with your unit and follow the replies here.', '<a class="btn btn-primary" href="#/tenant/raise-concern">Raise a concern</a>', 'chat')}</section></div>`
+  };
+}
+
+async function tenantAnnouncements() {
+  const list = (await services.announcements()).filter((a) => announcementTargetsTenant(a, state.user.tenantId) && a.publish <= isoDate(TODAY)).sort((a, b) => b.publish.localeCompare(a.publish));
+  return { title: 'Announcements', html: `<div class="content"><div class="grid grid-3">${list.map((a) => announcementCard(a, false)).join('') || `<section class="card">${emptyState('No announcements', 'Updates from your property office will show here.', '', 'megaphone')}</section>`}</div></div>` };
+}
+
+function notFound(title, back) {
+  return { title, html: `<div class="content"><section class="card">${emptyState(title, 'It may have been removed, or you don’t have access to it.', `<a class="btn btn-outline" href="#${back}">Go back</a>`, 'alert')}</section></div>` };
+}
+
+/* ---------------------------------------------------------
+   7. Actions (clicks) and forms (submits) — event delegation
+   --------------------------------------------------------- */
+const actions = {
+  'auth-mode': (el) => {
+    // Directional slide between panes (translate, not a re-render)
+    state.authMode = el.dataset.mode;
+    const signup = state.authMode === 'signup';
+    $('.tabs').classList.toggle('signup', signup);
+    $('.auth-track').classList.toggle('signup', signup);
+    $$('.tabs [role=tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === state.authMode)));
+    $('#pane-signin').inert = signup;
+    $('#pane-signup').inert = !signup;
+    $('#google-label').textContent = signup ? 'Sign up with Google' : 'Continue with Google';
+    $('#auth-msg').innerHTML = '';
+    fitAuthPane();
+  },
+  async 'google-signin'(el) {
+    const scenario = $('#demo-scenario').value;
+    const msg = $('#auth-msg');
+    msg.innerHTML = '';
+    el.disabled = true;
+    const label = el.innerHTML;
+    el.innerHTML = '<span class="spinner" aria-hidden="true"></span><span>Connecting to Google…</span>';
+    mascotMood('thinking');
+    const r = await services.auth.signInWithGoogle(scenario);
+    if (r.error) {
+      el.disabled = false; el.innerHTML = label;
+      msg.innerHTML = `<div class="error-summary">${esc(r.error)}</div>`;
+      shake(msg.firstElementChild);
+      mascotMood('error');
+      return;
+    }
+    mascotMood('happy');
+    await wait(reduceMotion() ? 0 : 550);
+    if (r.pending) return navigate('/access-pending');
+    state.user = r.user;
+    try { sessionStorage.setItem('rms-user', r.user.id); } catch (e) { /* ignore */ }
+    navigate(home());
+  },
+  logout() {
+    state.user = null; state.shell = false;
+    try { sessionStorage.removeItem('rms-user'); } catch (e) { /* ignore */ }
+    navigate('/login');
+  },
+  'open-menu': () => { $('.shell').classList.add('menu-open'); $('.menu-btn').setAttribute('aria-expanded', 'true'); setTimeout(() => moveIndicator(true), 20); $('#sidebar a')?.focus(); },
+  'close-menu': () => closeMenu(),
+  reload: () => router(),
+  'toggle-nav': () => setNavCollapsed(!state.navCollapsed),
+  'search-expand': () => { if (state.navCollapsed) setNavCollapsed(false); setTimeout(() => $('#nav-search')?.focus(), state.navCollapsed ? 0 : 60); $('#nav-search')?.focus(); },
+  'account-menu': (el) => {
+    const menu = $('#account-menu');
+    const open = menu.hidden;
+    menu.hidden = !open;
+    el.setAttribute('aria-expanded', String(open));
+    if (open) menu.querySelector('[role=menuitem]')?.focus();
+  },
+  'switch-account': (el) => {
+    const u = db.users.find((x) => x.id === el.dataset.id);
+    if (!u) return;
+    state.user = u; state.shell = false; state.path = '';
+    try { sessionStorage.setItem('rms-user', u.id); } catch (e) { /* ignore */ }
+    toast(`Switched to ${u.name}`);
+    navigate(home());
+  },
+  'toggle-collapse': (el) => { const open = el.parentElement.classList.toggle('open'); el.setAttribute('aria-expanded', String(open)); },
+  'toggle-theme': () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'),
+  print: () => window.print(),
+  todo: (el) => toast(`${el.dataset.what || 'This action'} — coming in the next build (demo).`),
+  'close-dialog': () => closeDialog(),
+  'focus-field': (el) => document.getElementById(el.dataset.id)?.focus(),
+
+  async 'toggle-notif'(el) {
+    const menu = $('#notif-menu');
+    const open = menu.hidden;
+    if (!open) { menu.hidden = true; el.setAttribute('aria-expanded', 'false'); return; }
+    const list = (await services.notifications(state.user.id)).slice(0, 6);
+    const base = state.user.role === 'tenant' ? '/tenant' : '/admin';
+    menu.innerHTML = `<header><strong>Notifications</strong>${list.some((n) => !n.read) ? '<button class="btn btn-ghost btn-sm" data-action="mark-all-read">Mark all read</button>' : ''}</header>
+      ${list.length ? `<ul>${list.map(notifItem).join('')}</ul>` : '<p class="muted small" style="padding:16px">No notifications yet.</p>'}
+      <footer><a href="#${base}/notifications" data-action="close-notif">See all notifications</a></footer>`;
+    menu.hidden = false; el.setAttribute('aria-expanded', 'true');
+  },
+  'close-notif': (el) => { $('#notif-menu').hidden = true; navigate(el.getAttribute('href').slice(1)); },
+  async 'open-notif'(el) { await services.markRead(el.dataset.id); $('#notif-menu').hidden = true; navigate(el.dataset.link); refreshBell(); },
+  async 'mark-all-read'() { await services.markAllRead(state.user.id); $('#notif-menu').hidden = true; toast('All notifications marked as read'); router(); },
+
+  sort(el) {
+    const table = el.closest('table');
+    const col = +el.dataset.col;
+    const th = el.closest('th');
+    const dir = th.getAttribute('aria-sort') === 'ascending' ? 'descending' : 'ascending';
+    $$('th', table).forEach((h) => h.hasAttribute('aria-sort') && h.setAttribute('aria-sort', 'none'));
+    th.setAttribute('aria-sort', dir);
+    const tbody = $('tbody', table);
+    const rows = $$('tr:not([data-nomatch])', tbody);
+    rows.sort((a, b) => {
+      const va = a.children[col].dataset.sort, vb = b.children[col].dataset.sort;
+      const na = parseFloat(va), nb = parseFloat(vb);
+      const cmp = !isNaN(na) && !isNaN(nb) && String(na) === va && String(nb) === vb ? na - nb : String(va).localeCompare(String(vb));
+      return dir === 'ascending' ? cmp : -cmp;
+    });
+    rows.forEach((r) => tbody.insertBefore(r, $('[data-nomatch]', tbody)));
+  },
+
+  'verify-payment'(el) {
+    const p = byId('payments', el.dataset.id);
+    const t = byId('tenants', p.tenantId);
+    confirmDialog('Verify payment?', `Confirm that <strong>${peso(p.amount)}</strong> from <strong>${esc(t.name)}</strong> (${esc(p.method)} · ${esc(p.ref)}) was received. It will be allocated to the bill and the balance recalculated.`, 'Verify payment', 'verify', { id: p.id });
+  },
+  'reject-payment'(el) {
+    const p = byId('payments', el.dataset.id);
+    openDialog({ title: 'Reject payment', form: 'reject', submit: 'Reject payment', danger: true, ctx: { id: p.id },
+      body: `<p>Rejecting <strong>${peso(p.amount)}</strong> (${esc(p.method)} · ${esc(p.ref)}). The tenant will be notified with your reason.</p>${field({ id: 'r-reason', label: 'Reason', type: 'textarea', required: true, help: 'Shown to the tenant.', attrs: 'rows="3"' })}` });
+  },
+  'add-item'(el) {
+    openDialog({ title: 'Add line item', form: 'add-item', submit: 'Add to bill', ctx: { id: el.dataset.id },
+      body: `<div class="form-grid">${field({ id: 'i-type', label: 'Charge type', type: 'select', required: true, options: ['Electricity', 'Water', 'Internet', 'Parking', 'Maintenance', 'Association dues', 'Penalty', 'Other'] })}
+        ${field({ id: 'i-amount', label: 'Amount (₱)', type: 'number', required: true, attrs: 'min="0.01" step="0.01" inputmode="decimal"' })}</div>
+        ${field({ id: 'i-desc', label: 'Description', required: true, attrs: 'maxlength="60"' })}
+        <div>${field({ id: 'i-note', label: 'Billing period / notes', help: 'e.g. meter readings or coverage dates.' })}
+          <div id="penalty-note"><div class="collapse"><div class="collapse-inner"><div class="callout warn">Only add a penalty where the contract permits it. It will be shown to the tenant as its own line.</div></div></div></div></div>` });
+  },
+  'remove-item'(el) {
+    const b = byId('bills', el.dataset.bill);
+    const it = b.items.find((i) => i.id === el.dataset.item);
+    confirmDialog('Remove line item?', `Remove <strong>${esc(it.desc)}</strong> (${peso(it.amount)}) from ${esc(b.id)}? This is recorded in the bill’s activity log.`, 'Remove', 'remove-item', { bill: b.id, item: it.id }, true);
+  },
+  'record-payment'(el) {
+    const b = byId('bills', el.dataset.id);
+    const c = billCalc(b);
+    openDialog({ title: 'Record payment', form: 'record-payment', submit: 'Record payment', ctx: { id: b.id },
+      body: `<p class="muted">${esc(tenantOfBill(b).name)} · ${esc(b.id)} · balance <strong class="num">${peso(c.balance)}</strong></p>
+        <div class="form-grid">${field({ id: 'p-amount', label: 'Amount (₱)', type: 'number', required: true, value: c.balance, attrs: 'min="0.01" step="0.01" inputmode="decimal"' })}
+        ${field({ id: 'p-date', label: 'Payment date', type: 'date', required: true, value: isoDate(TODAY), attrs: `max="${isoDate(TODAY)}"` })}
+        ${field({ id: 'p-method', label: 'Method', type: 'select', required: true, options: ['Cash', 'Bank transfer', 'GCash', 'Maya', 'Check'] })}
+        ${field({ id: 'p-ref', label: 'Reference no.', required: true, help: 'OR number, bank or e-wallet reference.' })}</div>
+        ${field({ id: 'p-note', label: 'Notes', type: 'textarea', attrs: 'rows="2"' })}
+        <label class="check"><input type="checkbox" id="p-verified" name="p-verified" checked><span>Mark as verified now (you received the money)</span></label>` });
+  },
+  'new-announcement'() {
+    openDialog({ title: 'New announcement', form: 'announcement', submit: 'Publish',
+      body: `${field({ id: 'a-title', label: 'Title', required: true, attrs: 'maxlength="90"' })}
+        ${field({ id: 'a-body', label: 'Message', type: 'textarea', required: true, attrs: 'rows="4"' })}
+        <div class="form-grid">${field({ id: 'a-category', label: 'Category', type: 'select', required: true, options: ['Maintenance', 'Electricity', 'Payment Reminder', 'General Update', 'Emergency', 'System Update'] })}
+        ${field({ id: 'a-priority', label: 'Priority', type: 'select', options: ['Normal', 'High'] })}</div>
+        <div>${field({ id: 'a-audience', label: 'Audience', type: 'select', required: true, options: [['all', 'All tenants'], ['property', 'Selected property'], ['tenant', 'Selected tenant']] })}
+          <div id="aud-property"><div class="collapse"><div class="collapse-inner">${field({ id: 'a-property', label: 'Property', type: 'select', options: db.properties.map((p) => [p.id, p.name]) })}</div></div></div>
+          <div id="aud-tenant"><div class="collapse"><div class="collapse-inner">${field({ id: 'a-tenant', label: 'Tenant', type: 'select', options: db.tenants.map((t) => [t.id, t.name]) })}</div></div></div></div>
+        <div class="form-grid">${field({ id: 'a-publish', label: 'Publish date', type: 'date', required: true, value: isoDate(TODAY) })}
+        ${field({ id: 'a-expiry', label: 'Expiry date (optional)', type: 'date' })}</div>
+        <p class="help">Targeted tenants get an in-app notification when it publishes.</p>` });
+  }
+};
+
+const forms = {
+  async verify() {
+    await services.verifyPayment(state.dialogCtx.id);
+    closeDialog(); toast('Payment verified and allocated'); router();
+  },
+  async reject(form) {
+    if (!validate(form, { 'r-reason': (v) => (v.length < 5 ? 'Give the tenant a short reason (at least 5 characters).' : '') })) return;
+    await services.rejectPayment(state.dialogCtx.id, form.elements['r-reason'].value.trim());
+    closeDialog(); toast('Payment rejected; tenant notified'); router();
+  },
+  async 'add-item'(form) {
+    const ok = validate(form, {
+      'i-amount': (v) => (!v ? 'Enter an amount.' : Number(v) <= 0 ? 'Amount must be more than ₱0.' : ''),
+      'i-desc': (v) => (!v ? 'Describe the charge.' : '')
+    });
+    if (!ok) return;
+    const e = form.elements;
+    await services.addBillItem(state.dialogCtx.id, { type: e['i-type'].value, desc: e['i-desc'].value.trim(), amount: +(+e['i-amount'].value).toFixed(2), note: e['i-note'].value.trim() });
+    closeDialog(); toast('Line item added; totals recalculated'); router();
+  },
+  async 'remove-item'() {
+    await services.removeBillItem(state.dialogCtx.bill, state.dialogCtx.item);
+    closeDialog(); toast('Line item removed'); router();
+  },
+  async 'record-payment'(form) {
+    const ok = validate(form, {
+      'p-amount': (v) => (!v ? 'Enter the amount received.' : Number(v) <= 0 ? 'Amount must be more than ₱0.' : ''),
+      'p-date': (v) => (!v ? 'Choose the payment date.' : v > isoDate(TODAY) ? 'Date can’t be in the future.' : ''),
+      'p-ref': (v) => (!v ? 'Enter a reference so the payment can be audited.' : '')
+    });
+    if (!ok) return;
+    const e = form.elements;
+    await services.recordPayment(state.dialogCtx.id, { amount: +(+e['p-amount'].value).toFixed(2), date: e['p-date'].value, method: e['p-method'].value, ref: e['p-ref'].value.trim(), note: e['p-note'].value.trim(), verified: e['p-verified'].checked });
+    closeDialog(); toast('Payment recorded'); router();
+  },
+  async announcement(form) {
+    const e = form.elements;
+    const ok = validate(form, {
+      'a-title': (v) => (!v ? 'Add a title.' : ''),
+      'a-body': (v) => (v.length < 10 ? 'Write a message (at least 10 characters).' : ''),
+      'a-publish': (v) => (!v ? 'Choose a publish date.' : ''),
+      'a-expiry': (v) => (v && v < e['a-publish'].value ? 'Expiry must be after the publish date.' : '')
+    });
+    if (!ok) return;
+    const type = e['a-audience'].value;
+    const ids = type === 'property' ? [e['a-property'].value] : type === 'tenant' ? [e['a-tenant'].value] : [];
+    const n = await services.publishAnnouncement({ title: e['a-title'].value.trim(), body: e['a-body'].value.trim(), category: e['a-category'].value, priority: e['a-priority'].value, publish: e['a-publish'].value, expiry: e['a-expiry'].value, targets: { type, ids } });
+    closeDialog(); toast(n ? `Published · ${n} tenant${n > 1 ? 's' : ''} targeted` : 'Announcement scheduled'); router();
+  },
+  async reply(form) {
+    if (!validate(form, { reply: (v) => (!v ? 'Write a message before sending.' : '') })) return;
+    const btn = $('[type=submit]', form); btn.disabled = true;
+    await services.replyConcern(form.dataset.id, form.elements.reply.value.trim());
+    toast('Message sent'); await router();
+    $('.thread')?.lastElementChild?.scrollIntoView({ block: 'nearest' });
+  },
+  async 'concern-update'(form) {
+    await services.updateConcern(form.dataset.id, { status: form.elements['c-status'].value, assignedTo: form.elements['c-assign'].value });
+    toast('Concern updated; tenant notified of status changes'); router();
+  },
+  async 'new-concern'(form) {
+    const ok = validate(form, {
+      'n-category': (v) => (!v ? 'Choose a category.' : ''),
+      'n-title': (v) => (!v ? 'Add a short title.' : v.length < 4 ? 'Title is too short.' : ''),
+      'n-desc': (v) => (v.length < 15 ? 'Describe the problem in at least 15 characters.' : '')
+    });
+    if (!ok) return;
+    const e = form.elements;
+    const btn = $('[type=submit]', form); btn.disabled = true; btn.innerHTML = '<span class="spinner" aria-hidden="true"></span>Submitting…';
+    const id = await services.createConcern(state.user.tenantId, { category: e['n-category'].value, title: e['n-title'].value.trim(), description: e['n-desc'].value.trim(), attachment: e['n-photo'].files[0]?.name || '' });
+    toast('Concern submitted. The property team has been notified.');
+    navigate('/tenant/concerns/' + id);
+  }
+};
+
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-action]');
+  if (el && actions[el.dataset.action]) {
+    if (el.tagName === 'A' || el.tagName === 'BUTTON') e.preventDefault();
+    actions[el.dataset.action](el, e);
+    return;
+  }
+  const am = $('#account-menu');
+  if (am && !am.hidden && !e.target.closest('.sb-profile-wrap')) { am.hidden = true; $('.sb-profile')?.setAttribute('aria-expanded', 'false'); }
+  // Close the notification menu on outside click
+  const menu = $('#notif-menu');
+  if (menu && !menu.hidden && !e.target.closest('.notif-wrap')) { menu.hidden = true; $('#bell')?.setAttribute('aria-expanded', 'false'); }
+});
+
+document.addEventListener('submit', (e) => {
+  const form = e.target.closest('form[data-form]');
+  if (!form) return;
+  e.preventDefault();
+  forms[form.dataset.form]?.(form);
+});
+
+document.addEventListener('input', (e) => {
+  if (e.target.matches('[data-filter]')) applyFilters(e.target.closest('[data-filterable]'));
+  if (e.target.id === 'nav-search') filterNav(e.target.value);
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && state.shell) {
+    e.preventDefault();
+    if (isMobileNav() && !$('.shell.menu-open')) actions['open-menu']();
+    actions['search-expand']();
+  }
+  if (e.target.id === 'nav-search') {
+    if (e.key === 'Enter') { const first = $('#sb-nav li[data-item]:not(.out) a'); if (first) { e.preventDefault(); first.click(); e.target.value = ''; filterNav(''); } }
+    if (e.key === 'Escape' && e.target.value) { e.stopPropagation(); e.target.value = ''; filterNav(''); }
+  }
+  if (e.key === 'Escape' && $('#account-menu') && !$('#account-menu').hidden) { $('#account-menu').hidden = true; $('.sb-profile').setAttribute('aria-expanded', 'false'); $('.sb-profile').focus(); }
+});
+window.addEventListener('resize', () => moveIndicator(true));
+document.addEventListener('change', (e) => {
+  if (e.target.matches('select[data-filter]')) applyFilters(e.target.closest('[data-filterable]'));
+  if (e.target.id === 'a-audience') { $('#aud-property').classList.toggle('open', e.target.value === 'property'); $('#aud-tenant').classList.toggle('open', e.target.value === 'tenant'); }
+  if (e.target.id === 'i-type') { $('#penalty-note').classList.toggle('open', e.target.value === 'Penalty'); const d = $('#i-desc'); if (!d.value) d.value = e.target.value === 'Other' ? '' : e.target.value; }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if ($('.shell.menu-open')) closeMenu();
+  const menu = $('#notif-menu');
+  if (menu && !menu.hidden) { menu.hidden = true; $('#bell')?.focus(); }
+});
+
+function applyFilters(scope) {
+  if (!scope) return;
+  const q = ($('[data-filter="q"]', scope)?.value || '').toLowerCase().trim();
+  const sels = $$('select[data-filter]', scope);
+  let shown = 0;
+  $$('[data-row]', scope).forEach((r) => {
+    let ok = !q || (r.dataset.search || '').includes(q);
+    sels.forEach((s) => { const key = 'f' + s.dataset.filter[0].toUpperCase() + s.dataset.filter.slice(1); if (s.value && r.dataset[key] !== s.value) ok = false; });
+    r.hidden = !ok;
+    if (ok) shown++;
+  });
+  const nm = $('[data-nomatch]', scope);
+  if (nm) nm.hidden = shown > 0;
+}
+
+/* ---------------------------------------------------------
+   8. Router & shell
+   --------------------------------------------------------- */
+/* Sidebar sections: [section label, [[key, label, icon], ...]] */
+const NAV = {
+  manager: [
+    ['Menu', [['dashboard', 'Dashboard', 'grid'], ['properties', 'Properties', 'building'], ['units', 'Units / Spaces', 'units'], ['tenants', 'Tenants', 'users'], ['contracts', 'Contracts', 'file']]],
+    ['Finance', [['billing', 'Billing', 'receipt'], ['payments', 'Payments', 'card'], ['reports', 'Reports', 'chart']]],
+    ['Communication', [['concerns', 'Concerns', 'chat'], ['announcements', 'Announcements', 'megaphone'], ['notifications', 'Notifications', 'bell']]],
+    ['General', [['settings', 'Settings', 'gear']]]
+  ],
+  tenant: [
+    ['Menu', [['dashboard', 'My Dashboard', 'grid'], ['contract', 'My Contract', 'file'], ['bills', 'My Bills', 'receipt'], ['payments', 'My Payments', 'card']]],
+    ['Support', [['raise-concern', 'Raise a Concern', 'plus'], ['concerns', 'My Concerns', 'chat'], ['announcements', 'Announcements', 'megaphone'], ['notifications', 'Notifications', 'bell']]],
+    ['General', [['profile', 'My Profile', 'user']]]
+  ]
+};
+const navItems = (role) => NAV[role].flatMap(([, items]) => items);
+
+const ROUTES = [
+  ['/login', viewLogin, null], ['/access-pending', viewAccessPending, null],
+  ['/admin/dashboard', adminDashboard, 'manager'], ['/admin/properties', adminProperties, 'manager'], ['/admin/units', adminUnits, 'manager'],
+  ['/admin/tenants', adminTenants, 'manager'], ['/admin/contracts', adminContracts, 'manager'], ['/admin/billing', adminBilling, 'manager'],
+  ['/admin/billing/:id', adminBillDetail, 'manager'], ['/admin/payments', adminPayments, 'manager'], ['/admin/concerns', adminConcerns, 'manager'],
+  ['/admin/concerns/:id', concernDetail, 'manager'], ['/admin/announcements', adminAnnouncements, 'manager'], ['/admin/notifications', notificationsView, 'manager'],
+  ['/admin/reports', adminReports, 'manager'], ['/admin/settings', settingsView, 'manager'],
+  ['/tenant/dashboard', tenantDashboard, 'tenant'], ['/tenant/contract', tenantContract, 'tenant'], ['/tenant/bills', tenantBills, 'tenant'],
+  ['/tenant/bills/:id', tenantBillDetail, 'tenant'], ['/tenant/payments', tenantPayments, 'tenant'], ['/tenant/raise-concern', tenantRaiseConcern, 'tenant'],
+  ['/tenant/concerns', tenantConcerns, 'tenant'], ['/tenant/concerns/:id', concernDetail, 'tenant'], ['/tenant/announcements', tenantAnnouncements, 'tenant'],
+  ['/tenant/notifications', notificationsView, 'tenant'], ['/tenant/profile', settingsView, 'tenant']
+];
+
+function matchRoute(path) {
+  const parts = path.split('/').filter(Boolean);
+  for (const route of ROUTES) {
+    const rp = route[0].split('/').filter(Boolean);
+    if (rp.length !== parts.length) continue;
+    const params = {};
+    if (rp.every((seg, i) => (seg.startsWith(':') ? ((params[seg.slice(1)] = decodeURIComponent(parts[i])), true) : seg === parts[i]))) return { route, params };
+  }
+  return null;
+}
+
+const navigate = (path) => { if (location.hash === '#' + path) router(); else location.hash = '#' + path; };
+
+function renderPublic(html) { state.shell = false; $('#app').innerHTML = html; document.title = 'Rentwise · Sign in'; fitAuthPane(); initAuthArt(); }
+
+/* The sign-in area takes the height of the visible tab, animating between them. */
+function fitAuthPane() {
+  const vp = $('.auth-viewport');
+  const pane = $(state.authMode === 'signup' ? '#pane-signup' : '#pane-signin');
+  if (vp && pane) vp.style.height = pane.offsetHeight + 'px';
+}
+window.addEventListener('resize', fitAuthPane);
+
+function renderShell() {
+  const u = state.user;
+  const base = u.role === 'tenant' ? '/tenant/' : '/admin/';
+  let n = 0;
+  const sections = NAV[u.role].map(([label, items], si) => `
+    ${si ? '<div class="sb-divider" role="presentation"></div>' : ''}
+    <div class="nav-section" data-section>
+      <div class="nav-label">${esc(label)}</div>
+      <ul class="nav">${items.map(([key, text, ic]) => `<li data-item data-key="${key}" data-label="${esc(text.toLowerCase())}" style="--i:${n++}">
+        <a href="#${base}${key}" data-tip="${esc(text)}" class="tip-collapsed"><span class="nav-ic">${icon(ic, 18)}</span><span class="label">${esc(text)}</span><span class="nav-count" hidden></span></a></li>`).join('')}
+        ${label === 'General' ? `<li data-item data-key="logout" data-label="log out sign out" style="--i:${n++}"><a href="#/login" data-action="logout" data-tip="Log out" class="tip-collapsed"><span class="nav-ic">${icon('logout', 18)}</span><span class="label">Log out</span></a></li>` : ''}
+      </ul>
+    </div>`).join('');
+  const others = db.users.filter((x) => x.id !== u.id);
+  $('#app').innerHTML = `<a class="skip" href="#view" data-action="focus-field" data-id="view">Skip to content</a>
+  <div class="shell ${state.navCollapsed ? 'nav-collapsed' : ''}">
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <div class="sb-head">
+        <a class="sb-logo" href="#${base}dashboard" aria-label="${esc(BRAND.name)} home">
+          <img class="logo-full" src="${BRAND.logoLight}" alt="${esc(BRAND.name)}" width="448" height="96">
+          <img class="logo-mark" src="${BRAND.markLight}" alt="" width="93" height="96">
+        </a>
+        <button class="sb-collapse" data-action="toggle-nav" aria-label="${state.navCollapsed ? 'Expand' : 'Collapse'} sidebar" aria-expanded="${!state.navCollapsed}" aria-controls="sidebar" data-tip="${state.navCollapsed ? 'Expand' : 'Collapse'}">${icon('chevronLeft', 16, 2.2)}<span class="sb-collapse-text">Collapse</span></button>
+      </div>
+      <div class="sb-divider" role="presentation"></div>
+      <div class="sb-profile-wrap">
+        <button class="sb-profile tip-collapsed" data-action="account-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu" data-tip="${esc(u.name)}">
+          <span class="avatar">${initials(u.name)}</span>
+          <span class="sb-profile-text"><span class="nm">${esc(u.name)}</span><span class="sw">${icon('swap', 13, 2)}Switch account</span></span>
+          <span class="sb-chev">${icon('chevronRight', 16, 2)}</span>
+        </button>
+        <div class="account-menu" id="account-menu" role="menu" hidden>
+          <div class="am-label">Signed in as</div>
+          <div class="am-me"><span class="avatar">${initials(u.name)}</span><div><div class="strong">${esc(u.name)}</div><div class="small">${esc(u.email)}</div></div></div>
+          <div class="am-label">Demo accounts</div>
+          ${others.map((o) => `<button role="menuitem" class="am-item" data-action="switch-account" data-id="${o.id}"><span class="avatar">${initials(o.name)}</span><span><span class="strong">${esc(o.name)}</span><span class="small">${o.role === 'tenant' ? 'Tenant' : 'Manager'}</span></span></button>`).join('')}
+          <div class="am-sep"></div>
+          <a role="menuitem" class="am-item" href="#${base}${u.role === 'tenant' ? 'profile' : 'settings'}">${icon('user', 16)}<span>${u.role === 'tenant' ? 'My profile' : 'Settings'}</span></a>
+          <button role="menuitem" class="am-item danger" data-action="logout">${icon('logout', 16)}<span>Log out</span></button>
+        </div>
+      </div>
+      <div class="sb-divider" role="presentation"></div>
+      <div class="sb-search">
+        <button type="button" class="sb-search-btn tip-collapsed" data-action="search-expand" aria-label="Search menu" data-tip="Search (Ctrl K)">${icon('search', 17, 2)}</button>
+        <label class="sr-only" for="nav-search">Search menu</label>
+        <input id="nav-search" type="search" placeholder="Search…" autocomplete="off" spellcheck="false">
+        <kbd aria-hidden="true">Ctrl K</kbd>
+      </div>
+      <nav class="sb-nav" id="sb-nav" aria-label="Main">
+        <span class="nav-indicator" aria-hidden="true"></span>
+        ${sections}
+        <p class="nav-empty" hidden>No menu items match.</p>
+      </nav>
+    </aside>
+    <div class="scrim" data-action="close-menu"></div>
+    <div class="main">
+      <header class="topbar">
+        <button class="icon-btn menu-btn" data-action="open-menu" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false" data-tip="Menu">${icon('menu', 20)}</button>
+        <div class="topbar-title"><nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav><h1 id="page-title"></h1></div>
+        <div class="topbar-actions" id="topbar-actions"></div>
+        <button class="icon-btn" id="theme-btn" data-action="toggle-theme"></button>
+        <div class="notif-wrap"><button class="icon-btn" id="bell" data-action="toggle-notif" aria-haspopup="true" aria-expanded="false" aria-controls="notif-menu" aria-label="Notifications" data-tip="Notifications">${icon('bell', 20)}<span class="count-dot" id="bell-count" hidden></span></button><div class="notif-menu" id="notif-menu" hidden></div></div>
+      </header>
+      <main id="view" tabindex="-1"></main>
+    </div>
+  </div>`;
+  state.shell = true;
+  updateThemeButton();
+}
+
+function updateNav(pattern) {
+  const role = state.user.role;
+  const section = pattern.split('/')[2];
+  const unread = db.notifications.filter((n) => n.userId === state.user.id && !n.read).length;
+  const newConcerns = role === 'manager' ? db.concerns.filter((c) => c.status === 'Pending').length : 0;
+  $$('#sb-nav li[data-item]').forEach((li) => {
+    const a = li.querySelector('a');
+    const key = li.dataset.key;
+    if (key === section) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    const badge = li.querySelector('.nav-count');
+    if (badge) {
+      const count = key === 'notifications' ? unread : key === 'concerns' ? newConcerns : 0;
+      badge.hidden = !count; badge.textContent = count;
+      badge.setAttribute('aria-label', `${count} new`);
+    }
+  });
+  moveIndicator();
+}
+
+/* Full-width highlight bar that slides to the active item. */
+function moveIndicator(instant = false) {
+  const nav = $('#sb-nav');
+  if (!nav) return;
+  const ind = $('.nav-indicator', nav);
+  const a = $('a[aria-current="page"]', nav);
+  const li = a?.closest('li');
+  if (!a || li.classList.contains('out')) { ind.classList.remove('on'); return; }
+  if (instant || !ind.classList.contains('ready')) ind.classList.add('no-anim');
+  const top = a.getBoundingClientRect().top - nav.getBoundingClientRect().top + nav.scrollTop;
+  ind.style.transform = `translateY(${top}px)`;
+  ind.style.height = a.offsetHeight + 'px';
+  ind.classList.add('on');
+  if (ind.classList.contains('no-anim')) { void ind.offsetHeight; requestAnimationFrame(() => { ind.classList.remove('no-anim'); ind.classList.add('ready'); }); }
+}
+
+/* Live menu search: matching items stay, others collapse (height:auto transition). */
+function filterNav(q) {
+  q = q.toLowerCase().trim();
+  let any = 0;
+  $$('#sb-nav .nav-section').forEach((sec) => {
+    let shown = 0;
+    $$('li[data-item]', sec).forEach((li) => { const ok = !q || li.dataset.label.includes(q); li.classList.toggle('out', !ok); li.querySelector('a').tabIndex = ok ? 0 : -1; if (ok) shown++; });
+    sec.classList.toggle('out', !shown);
+    any += shown;
+  });
+  $$('#sb-nav .sb-divider').forEach((d) => d.classList.toggle('out', !!q));
+  $('#sb-nav .nav-empty').hidden = any > 0;
+  setTimeout(() => moveIndicator(), 220);
+  moveIndicator();
+}
+
+function setNavCollapsed(collapsed) {
+  state.navCollapsed = collapsed;
+  try { localStorage.setItem('rms-nav', collapsed ? '1' : '0'); } catch (e) { /* ignore */ }
+  const shell = $('.shell');
+  shell.classList.toggle('nav-collapsed', collapsed);
+  const btn = $('.sb-collapse');
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  btn.setAttribute('aria-label', (collapsed ? 'Expand' : 'Collapse') + ' sidebar');
+  btn.dataset.tip = collapsed ? 'Expand' : 'Collapse';
+  hideTip();
+  $('#account-menu').hidden = true;
+  if (collapsed) { $('#nav-search').value = ''; filterNav(''); }
+  const sb = $('#sidebar');
+  const done = (e) => { if (e.target === sb && e.propertyName === 'width') { sb.removeEventListener('transitionend', done); moveIndicator(true); } };
+  sb.addEventListener('transitionend', done);
+  setTimeout(() => moveIndicator(true), 320);
+}
+
+function refreshBell() {
+  if (!state.user || !$('#bell-count')) return;
+  const unread = db.notifications.filter((n) => n.userId === state.user.id && !n.read).length;
+  const b = $('#bell-count');
+  b.hidden = !unread; b.textContent = unread;
+  $('#bell').setAttribute('aria-label', unread ? `Notifications, ${unread} unread` : 'Notifications');
+}
+
+function closeMenu() {
+  $('.shell')?.classList.remove('menu-open');
+  $('.menu-btn')?.setAttribute('aria-expanded', 'false');
+}
+
+let routeToken = 0;
+async function router() {
+  const path = location.hash.slice(1) || home();
+  const m = matchRoute(path);
+  if (!m) return navigate(home());
+  const [pattern, view, role] = m.route;
+  if (!role) {
+    if (state.user && pattern === '/login') return navigate(home());
+    return renderPublic(view(m.params));
+  }
+  if (!state.user) return navigate('/login');
+  if (state.user.role !== role) return navigate(home());       // role-based access control (backend must enforce too)
+  if (!state.shell) renderShell();
+  closeMenu();
+  updateNav(pattern);
+  const token = ++routeToken;
+  const viewEl = $('#view');
+  const samePage = state.path === path;
+  const dir = samePage ? '' : slideDirection(state.path, path);
+  if (!samePage) viewEl.innerHTML = loadingState();
+  state.path = path;
+  try {
+    const out = await view(m.params);
+    if (token !== routeToken) return;                             // a newer navigation won
+    $('#page-title').textContent = out.title;
+    $('#crumbs').innerHTML = (out.crumbs || []).map(([label, href], i, arr) => (href ? `<a href="${href}">${esc(label)}</a>` : `<span ${i === arr.length - 1 ? 'aria-current="page"' : ''}>${esc(label)}</span>`)).join('<span aria-hidden="true">/</span>');
+    $('#topbar-actions').innerHTML = out.actions || '';
+    viewEl.innerHTML = out.html;
+    if (dir) viewEl.firstElementChild?.classList.add('slide-' + dir);
+    document.title = `${out.title} · Rentwise`;
+    if (!samePage) { window.scrollTo(0, 0); viewEl.focus({ preventScroll: true }); }
+  } catch (err) {
+    console.error(err);
+    viewEl.innerHTML = `<div class="content">${errorState(err.message || 'Could not load this page.')}</div>`;
+  }
+  refreshBell();
+}
+
+/* ---------------------------------------------------------
+   9. Motion systems
+   --------------------------------------------------------- */
+
+/* Directional slides: deeper page or later menu item = "next" (enters from the right). */
+function slideDirection(from, to) {
+  if (!from || !state.user) return '';
+  const rank = (p) => { const parts = p.split('/').filter(Boolean); return { depth: parts.length, idx: navItems(state.user.role).findIndex((n) => n[0] === parts[1]), area: parts[0] }; };
+  const a = rank(from), b = rank(to);
+  if (a.area !== b.area) return '';
+  if (b.depth !== a.depth) return b.depth > a.depth ? 'next' : 'back';
+  return b.idx >= a.idx ? 'next' : 'back';
+}
+
+/* Instant theme switch: disable all transitions for the frame the theme flips. */
+function applyTheme(theme) {
+  const root = document.documentElement;
+  root.classList.add('theme-switching');
+  root.dataset.theme = theme;
+  void root.offsetHeight;                                  // flush styles with transitions off
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switching')));
+  try { localStorage.setItem('rms-theme', theme); } catch (e) { /* ignore */ }
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#0A1726' : '#1B4D7E');
+  updateThemeButton();
+}
+function updateThemeButton() {
+  const btn = $('#theme-btn');
+  if (!btn) return;
+  const dark = document.documentElement.dataset.theme === 'dark';
+  const label = dark ? 'Switch to light theme' : 'Switch to dark theme';
+  btn.innerHTML = icon(dark ? 'sun' : 'moon', 20);
+  btn.setAttribute('aria-label', label);
+  btn.dataset.tip = dark ? 'Light theme' : 'Dark theme';
+  if (tip.target === btn && tip.el) tip.el.textContent = btn.dataset.tip;
+}
+
+/* Tooltips: 600ms delay for the first one, then instant (skip delay 300ms)
+   while the pointer moves between controls. Mouse + keyboard focus only. */
+const tip = { el: null, target: null, timer: 0, lastHide: -Infinity };
+const TIP_DELAY = 600, TIP_SKIP = 300;
+function scheduleTip(target) {
+  // Sidebar labels only need tooltips when the sidebar is collapsed to icons
+  if (target.classList.contains('tip-collapsed') && !($('.shell.nav-collapsed') && !isMobileNav())) return;
+  clearTimeout(tip.timer);
+  const skip = tip.el || performance.now() - tip.lastHide < TIP_SKIP;
+  if (tip.el) removeTip(false);
+  tip.target = target;
+  if (skip) showTip(target, true);
+  else tip.timer = setTimeout(() => showTip(target, false), TIP_DELAY);
+}
+function showTip(target, instant) {
+  if (!document.body.contains(target)) return;
+  const el = document.createElement('div');
+  el.className = 'tooltip' + (instant ? ' instant' : '');
+  el.setAttribute('role', 'tooltip');
+  el.textContent = target.dataset.tip;
+  document.body.appendChild(el);
+  const r = target.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  const below = r.bottom + 8 + h < window.innerHeight;
+  const left = Math.min(window.innerWidth - w - 8, Math.max(8, r.left + r.width / 2 - w / 2));
+  el.style.left = left + 'px';
+  el.style.top = (below ? r.bottom + 8 : r.top - h - 8) + 'px';
+  el.style.setProperty('--tip-origin', below ? 'top center' : 'bottom center');
+  tip.el = el;
+}
+function removeTip(markHidden = true) {
+  if (tip.el) { tip.el.remove(); tip.el = null; if (markHidden) tip.lastHide = performance.now(); }
+}
+function hideTip() { clearTimeout(tip.timer); removeTip(true); tip.target = null; }
+document.addEventListener('pointerover', (e) => {
+  if (e.pointerType !== 'mouse') return;
+  const t = e.target.closest('[data-tip]');
+  if (t && t !== tip.target) scheduleTip(t);
+});
+document.addEventListener('pointerout', (e) => {
+  const t = e.target.closest('[data-tip]');
+  if (t && t === tip.target && !t.contains(e.relatedTarget)) hideTip();
+});
+document.addEventListener('focusin', (e) => { const t = e.target.closest?.('[data-tip]'); if (t && t.matches(':focus-visible')) scheduleTip(t); });
+document.addEventListener('focusout', (e) => { if (e.target === tip.target) hideTip(); });
+document.addEventListener('pointerdown', hideTip, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
+window.addEventListener('scroll', hideTip, { passive: true, capture: true });
+
+/* Velocity spring (bounce 0, ~0.5s), seeded with the gesture's release velocity. */
+function springTo(from, to, velocity, onUpdate, onDone, { duration = 0.5, bounce = 0 } = {}) {
+  if (reduceMotion()) { onUpdate(to); onDone(); return 0; }
+  const omega = (2 * Math.PI) / duration;
+  const k = omega * omega;
+  const c = 2 * (1 - bounce) * omega;                       // bounce 0 = critically damped
+  let x = from, v = velocity, last = performance.now();
+  const step = (now) => {
+    const dt = Math.min(0.032, (now - last) / 1000); last = now;
+    for (let i = 0; i < 4; i++) { const h = dt / 4; v += (-k * (x - to) - c * v) * h; x += v * h; }
+    onUpdate(x);
+    if (Math.abs(x - to) < 0.5 && Math.abs(v) < 20) { onUpdate(to); onDone(); return; }
+    drawer.raf = requestAnimationFrame(step);
+  };
+  drawer.raf = requestAnimationFrame(step);
+  return drawer.raf;
+}
+
+/* Mobile drawer gesture: drag left to close (follows the finger),
+   drag right past the open edge = rubber band, release = velocity spring. */
+const drawer = { active: false, moved: false, startX: 0, lastX: 0, lastT: 0, v: 0, x: 0, sb: null, id: null, raf: 0, justDragged: false };
+const isMobileNav = () => window.matchMedia('(max-width: 1023px)').matches;
+function paintDrawer(x) {
+  const w = drawer.sb.offsetWidth;
+  drawer.sb.style.transform = `translateX(${Math.min(x, 64)}px)`;
+  const scrim = $('.scrim');
+  if (scrim) scrim.style.opacity = String(Math.max(0, Math.min(1, 1 + Math.min(0, x) / w)));
+}
+document.addEventListener('pointerdown', (e) => {
+  const sb = e.target.closest('.sidebar');
+  if (!sb || !isMobileNav() || !$('.shell.menu-open')) return;
+  cancelAnimationFrame(drawer.raf);
+  Object.assign(drawer, { active: true, moved: false, startX: e.clientX, lastX: e.clientX, lastT: performance.now(), v: 0, x: 0, sb, id: e.pointerId });
+});
+document.addEventListener('pointermove', (e) => {
+  if (!drawer.active || e.pointerId !== drawer.id) return;
+  const pull = e.clientX - drawer.startX;
+  if (!drawer.moved) {
+    if (Math.abs(pull) < 6) return;
+    drawer.moved = true;
+    drawer.sb.classList.add('dragging');
+    try { drawer.sb.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  }
+  let x;
+  if (pull <= 0) x = pull;                                   // closing: 1:1 with the finger
+  else { const over = Math.max(0, pull - 12); x = 64 * (over / (over + 150)); }   // rubber band
+  const now = performance.now(), dt = now - drawer.lastT;
+  if (dt > 0) drawer.v = 0.8 * (((e.clientX - drawer.lastX) / dt) * 1000) + 0.2 * drawer.v;   // px/s, smoothed
+  drawer.lastX = e.clientX; drawer.lastT = now; drawer.x = x;
+  paintDrawer(x);
+});
+function endDrawerDrag(e) {
+  if (!drawer.active || e.pointerId !== drawer.id) return;
+  drawer.active = false;
+  if (!drawer.moved) return;
+  drawer.justDragged = true;
+  setTimeout(() => { drawer.justDragged = false; }, 0);
+  const w = drawer.sb.offsetWidth;
+  const close = drawer.x < -w * 0.35 || drawer.v < -500;
+  const v0 = drawer.x > 0 ? 0 : drawer.v;                   // rubber band springs back from rest
+  springTo(drawer.x, close ? -(w + 16) : 0, v0, paintDrawer, () => {
+    if (close) closeMenu();
+    drawer.sb.classList.remove('dragging');
+    drawer.sb.style.transform = '';
+    const scrim = $('.scrim'); if (scrim) scrim.style.opacity = '';
+  });
+}
+document.addEventListener('dragstart', (e) => { if (e.target.closest?.('.sidebar')) e.preventDefault(); });   // links must not start a native drag
+document.addEventListener('pointerup', endDrawerDrag);
+document.addEventListener('pointercancel', endDrawerDrag);
+document.addEventListener('click', (e) => { if (drawer.justDragged) { e.preventDefault(); e.stopPropagation(); } }, true);
+
+/* Boot */
+try { document.documentElement.dataset.theme = localStorage.getItem('rms-theme') || document.documentElement.dataset.theme || 'light'; } catch (e) { /* ignore */ }
+window.addEventListener('hashchange', router);
+router();
